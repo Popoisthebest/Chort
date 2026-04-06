@@ -12,6 +12,66 @@ const getHeaders = () => {
   return headers;
 };
 
+// GitHub 계정에서 repo를 star하는 함수
+export const starRepo = async (owner, repo) => {
+  const token = localStorage.getItem("github_token");
+  if (!token) {
+    console.error("GitHub 토큰이 없습니다. 로그인해주세요.");
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.github.com/user/starred/${owner}/${repo}`,
+      {
+        method: "PUT",
+        headers: getHeaders(),
+      }
+    );
+
+    if (response.ok || response.status === 204) {
+      console.log(`✨ GitHub에서 ${repo} star 완료!`);
+      return true;
+    } else {
+      console.error(`Star 실패: ${response.status}`);
+      return false;
+    }
+  } catch (error) {
+    console.error("Star 중 에러:", error);
+    return false;
+  }
+};
+
+// GitHub 계정에서 repo의 star를 제거하는 함수
+export const unstarRepo = async (owner, repo) => {
+  const token = localStorage.getItem("github_token");
+  if (!token) {
+    console.error("GitHub 토큰이 없습니다. 로그인해주세요.");
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.github.com/user/starred/${owner}/${repo}`,
+      {
+        method: "DELETE",
+        headers: getHeaders(),
+      }
+    );
+
+    if (response.ok || response.status === 204) {
+      console.log(`🗑️ GitHub에서 ${repo} star 제거 완료!`);
+      return true;
+    } else {
+      console.error(`Unstar 실패: ${response.status}`);
+      return false;
+    }
+  } catch (error) {
+    console.error("Unstar 중 에러:", error);
+    return false;
+  }
+};
+
 // 1. 현재 피드(Feed.js)에서 사용하는 메인 데이터 호출 함수
 export const getTrendingRepos = async (page = 1) => {
   const date = new Date();

@@ -60,7 +60,13 @@ function App() {
             />
             <Route
               path="/profile"
-              element={user ? <Profile /> : <Navigate to="/login" replace />}
+              element={
+                user ? (
+                  <Profile user={user} />
+                ) : (
+                  <Navigate to="/login" replace />
+                )
+              }
             />
           </Routes>
 

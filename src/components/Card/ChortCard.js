@@ -9,7 +9,7 @@ import {
   Languages,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { getReadmeImage } from "../../api/github";
+import { getReadmeImage, starRepo, unstarRepo } from "../../api/github";
 
 const translateToKorean = async (text) => {
   if (!text) return "";
@@ -129,13 +129,17 @@ const ChortCard = ({ repo }) => {
     repo.description,
   ]);
 
-  const toggleStar = () => {
+  const toggleStar = async () => {
     const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
     if (isStarred) {
+      // Star 제거
+      await unstarRepo(repo.owner.login, repo.name);
       const newSaved = savedRepos.filter((r) => r.id !== repo.id);
       localStorage.setItem("chort_saved", JSON.stringify(newSaved));
       setIsStarred(false);
     } else {
+      // Star 추가
+      await starRepo(repo.owner.login, repo.name);
       savedRepos.push(repo);
       localStorage.setItem("chort_saved", JSON.stringify(savedRepos));
       setIsStarred(true);
