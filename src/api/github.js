@@ -16,28 +16,31 @@ const getHeaders = () => {
 export const starRepo = async (owner, repo) => {
   const token = localStorage.getItem("github_token");
   if (!token) {
-    console.error("GitHub 토큰이 없습니다. 로그인해주세요.");
+    console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
   }
 
   try {
+    console.log(`⭐ ${owner}/${repo} star 시도 중...`);
     const response = await fetch(
       `https://api.github.com/user/starred/${owner}/${repo}`,
       {
         method: "PUT",
         headers: getHeaders(),
-      }
+      },
     );
 
-    if (response.ok || response.status === 204) {
+    const data = await response.json().catch(() => ({}));
+
+    if (response.status === 204 || response.ok) {
       console.log(`✨ GitHub에서 ${repo} star 완료!`);
       return true;
     } else {
-      console.error(`Star 실패: ${response.status}`);
+      console.error(`❌ Star 실패: ${response.status}`, data);
       return false;
     }
   } catch (error) {
-    console.error("Star 중 에러:", error);
+    console.error("❌ Star 중 에러:", error);
     return false;
   }
 };
@@ -46,28 +49,31 @@ export const starRepo = async (owner, repo) => {
 export const unstarRepo = async (owner, repo) => {
   const token = localStorage.getItem("github_token");
   if (!token) {
-    console.error("GitHub 토큰이 없습니다. 로그인해주세요.");
+    console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
   }
 
   try {
+    console.log(`🗑️ ${owner}/${repo} star 제거 시도 중...`);
     const response = await fetch(
       `https://api.github.com/user/starred/${owner}/${repo}`,
       {
         method: "DELETE",
         headers: getHeaders(),
-      }
+      },
     );
 
-    if (response.ok || response.status === 204) {
-      console.log(`🗑️ GitHub에서 ${repo} star 제거 완료!`);
+    const data = await response.json().catch(() => ({}));
+
+    if (response.status === 204 || response.ok) {
+      console.log(`✨ GitHub에서 ${repo} star 제거 완료!`);
       return true;
     } else {
-      console.error(`Unstar 실패: ${response.status}`);
+      console.error(`❌ Unstar 실패: ${response.status}`, data);
       return false;
     }
   } catch (error) {
-    console.error("Unstar 중 에러:", error);
+    console.error("❌ Unstar 중 에러:", error);
     return false;
   }
 };

@@ -131,18 +131,31 @@ const ChortCard = ({ repo }) => {
 
   const toggleStar = async () => {
     const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
+
     if (isStarred) {
       // Star 제거
-      await unstarRepo(repo.owner.login, repo.name);
-      const newSaved = savedRepos.filter((r) => r.id !== repo.id);
-      localStorage.setItem("chort_saved", JSON.stringify(newSaved));
-      setIsStarred(false);
+      setIsStarred(false); // 즉시 UI 업데이트
+      const success = await unstarRepo(repo.owner.login, repo.name);
+
+      if (success) {
+        const newSaved = savedRepos.filter((r) => r.id !== repo.id);
+        localStorage.setItem("chort_saved", JSON.stringify(newSaved));
+      } else {
+        // 실패 시 원래대로
+        setIsStarred(true);
+      }
     } else {
       // Star 추가
-      await starRepo(repo.owner.login, repo.name);
-      savedRepos.push(repo);
-      localStorage.setItem("chort_saved", JSON.stringify(savedRepos));
-      setIsStarred(true);
+      setIsStarred(true); // 즉시 UI 업데이트
+      const success = await starRepo(repo.owner.login, repo.name);
+
+      if (success) {
+        savedRepos.push(repo);
+        localStorage.setItem("chort_saved", JSON.stringify(savedRepos));
+      } else {
+        // 실패 시 원래대로
+        setIsStarred(false);
+      }
     }
   };
 

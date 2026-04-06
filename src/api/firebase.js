@@ -6,6 +6,17 @@ import {
   signInWithPopup,
   signOut,
 } from "firebase/auth";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  query,
+  where,
+  orderBy,
+  getDocs,
+  deleteDoc,
+  doc,
+} from "firebase/firestore";
 
 // 💡 Firebase 콘솔 -> 프로젝트 개요 -> 앱 추가(웹)에서 나오는 설정값을 붙여넣으세요.
 const firebaseConfig = {
@@ -22,6 +33,9 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const githubProvider = new GithubAuthProvider();
 
+// 💡 GitHub provider에 필요한 스코프 추가 (star 권한)
+githubProvider.addScope("public_repo");
+
 // 로그인 함수
 export const loginWithGithub = async () => {
   try {
@@ -33,12 +47,15 @@ export const loginWithGithub = async () => {
 
     // 이 토큰을 로컬 스토리지에 저장해둡니다.
     if (token) {
+      console.log("✅ GitHub 토큰 저장 완료!");
       localStorage.setItem("github_token", token);
+    } else {
+      console.warn("⚠️ GitHub 토큰을 받지 못했습니다.");
     }
 
     return result.user;
   } catch (error) {
-    console.error("로그인 실패:", error);
+    console.error("❌ 로그인 실패:", error);
     return null;
   }
 };
