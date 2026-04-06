@@ -10,7 +10,6 @@ export default function Feed() {
   const [selectedRepo, setSelectedRepo] = useState(null);
   const loaderRef = useRef(null);
 
-  // 데이터 불러오기 함수
   const fetchMore = useCallback(async () => {
     if (loading) return;
     setLoading(true);
@@ -20,12 +19,10 @@ export default function Feed() {
     setLoading(false);
   }, [page, loading]);
 
-  // 첫 로드
   useEffect(() => {
     fetchMore();
   }, []);
 
-  // 무한 스크롤 감지
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -42,15 +39,10 @@ export default function Feed() {
 
   return (
     <div className="flex w-full h-full bg-black gap-0">
-      {/* 중앙 피드 - 모바일 숏폼 비율 유지 */}
       <div className="flex-1 flex justify-center">
         <div className="w-full max-w-[400px] overflow-y-scroll snap-y snap-mandatory border-r border-gray-800">
           {repos.map((repo, index) => (
-            <div
-              key={`${repo.id}-${index}`}
-              onClick={() => setSelectedRepo(repo)}
-              className="cursor-pointer"
-            >
+            <div key={`${repo.id}-${index}`}>
               <ChortCard
                 repo={repo}
                 onCommentClick={() => setSelectedRepo(repo)}
@@ -58,7 +50,6 @@ export default function Feed() {
             </div>
           ))}
 
-          {/* 무한 스크롤 트리거 지점 */}
           <div
             ref={loaderRef}
             className="h-20 flex items-center justify-center bg-black"
@@ -70,7 +61,6 @@ export default function Feed() {
         </div>
       </div>
 
-      {/* 우측 댓글 패널 - 사이드바처럼 항상 보임 */}
       {selectedRepo && (
         <CommentsPanel
           repo={selectedRepo}
