@@ -7,9 +7,13 @@ import {
   FileText,
   AlignLeft,
   Languages,
+  MessageCircle,
+  Send,
+  Trash2,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { getReadmeImage, starRepo, unstarRepo } from "../../api/github";
+import { auth, getComments as fetchComments, addComment, deleteComment } from "../../api/firebase";
 
 const translateToKorean = async (text) => {
   if (!text) return "";
@@ -34,6 +38,12 @@ const ChortCard = ({ repo }) => {
   const [koDescription, setKoDescription] = useState("번역 중...");
   const [koReadme, setKoReadme] = useState("번역 중...");
   const [isKorean, setIsKorean] = useState(true);
+
+  // 댓글 관련 state
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [showComments, setShowComments] = useState(false);
+  const [loadingComments, setLoadingComments] = useState(false);
 
   const cardRef = useRef(null);
   const hasFetched = useRef(false); // 💡 이미 데이터를 가져왔는지 기억하는 변수
@@ -100,6 +110,9 @@ const ChortCard = ({ repo }) => {
       } else {
         setKoReadme("README 데이터를 찾을 수 없습니다.");
       }
+
+      // 💡 카드가 보일 때 댓글 개수도 함께 로드
+      await loadComments();
     };
 
     // 3. 💡 화면 감지 센서 (Intersection Observer)
@@ -128,6 +141,40 @@ const ChortCard = ({ repo }) => {
     repo.default_branch,
     repo.description,
   ]);
+
+  // 댓글 로드 함수
+  const loadComments = async () => {
+    if (loadingComments) return;
+    setLoadingComments(true);
+    const loadedComments = await fetchComments(repo.id);
+    setComments(loadedComments);
+    setLoadingComments(false);
+  };
+
+  // 댓글 추가 함수
+  const handleAddComment = async () => {
+    const user = auth.currentUser;
+    if (!user || !commentText.trim()) {
+      console.log("사용자 정보 또는 댓글 내용이 없습니다.");
+      return;
+    }
+
+    const result = await addComment(repo.id, commentText, user);
+    if (result) {
+      setCommentText("");
+      await loadComments();
+    }
+  };
+
+  // 댓글 삭제 함수
+  const handleDeleteComment = async (commentId) => {
+    if (window.confirm("이 댓글을 삭제하시겠습니까?")) {
+      const success = await deleteComment(commentId);
+      if (success) {
+        await loadComments();
+      }
+    }
+  };
 
   const toggleStar = async () => {
     const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
@@ -360,16 +407,19 @@ const ChortCard = ({ repo }) => {
           </span>
         </button>
         <button
-          onClick={() =>
-            window.open(`https://github.com/${repo.full_name}`, "_blank")
-          }
+          onClick={async () => {
+            if (!showComments) {
+              await loadComments();
+            }
+            setShowComments(!showComments);
+          }}
           className="flex flex-col items-center transition-transform active:scale-90"
         >
           <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-            <Code className="w-6 h-6 text-white" />
+            <MessageCircle className="w-6 h-6 text-white" />
           </div>
           <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-            Repo
+            {comments.length}
           </span>
         </button>
         <button
@@ -383,7 +433,119 @@ const ChortCard = ({ repo }) => {
             Share
           </span>
         </button>
+        <button
+          onClick={() =>
+            window.open(`https://github.com/${repo.full_name}`, "_blank")
+          }
+          className="flex flex-col items-center transition-transform active:scale-90"
+        >
+          <div className="p-3 bg-black/50 border border-white/10 rounded-full">
+            <Code className="w-6 h-6 text-white" />
+          </div>
+          <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
+            Repo
+          </span>
+        </button>
       </div>
+
+      {/* 댓글 패널 */}
+      {showComments && (
+        <div className="absolute inset-0 bg-black/95 z-[9999] flex flex-col rounded-2xl overflow-hidden">
+          {/* 댓글 헤더 */}
+          <div className="flex justify-between items-center p-4 border-b border-white/10">
+            <h3 className="text-lg font-bold text-white">
+              댓글 ({comments.length})
+            </h3>
+            <button
+              onClick={() => setShowComments(false)}
+              className="text-gray-400 hover:text-white transition"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* 댓글 리스트 */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            {loadingComments ? (
+              <div className="flex justify-center items-center h-20">
+                <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            ) : comments.length === 0 ? (
+              <div className="text-center text-gray-400 py-8">
+                아직 댓글이 없습니다. 첫 번째 댓글을 남겨보세요! 💬
+              </div>
+            ) : (
+              comments.map((comment) => (
+                <div
+                  key={comment.id}
+                  className="bg-white/5 border border-white/10 rounded-lg p-3"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {comment.photoURL && (
+                        <img
+                          src={comment.photoURL}
+                          alt="avatar"
+                          className="w-6 h-6 rounded-full"
+                        />
+                      )}
+                      <div>
+                        <p className="text-sm font-bold text-white">
+                          {comment.displayName}
+                        </p>
+                        <p className="text-[11px] text-gray-500">
+                          {comment.createdAt
+                            ? new Date(comment.createdAt).toLocaleString(
+                                "ko-KR",
+                              )
+                            : "방금 전"}
+                        </p>
+                      </div>
+                    </div>
+                    {auth.currentUser?.uid === comment.userId && (
+                      <button
+                        onClick={() => handleDeleteComment(comment.id)}
+                        className="text-red-400 hover:text-red-300 transition"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-200 break-words">
+                    {comment.text}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* 댓글 입력 폼 */}
+          <div className="border-t border-white/10 p-4">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="댓글을 입력하세요..."
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleAddComment();
+                  }
+                }}
+                className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm"
+              />
+              <button
+                onClick={handleAddComment}
+                disabled={!commentText.trim()}
+                className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-lg px-3 py-2 transition flex items-center gap-1"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

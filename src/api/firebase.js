@@ -31,6 +31,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 const githubProvider = new GithubAuthProvider();
 
 // 💡 GitHub provider에 필요한 스코프 추가 (star 권한)
@@ -68,5 +69,66 @@ export const logoutUser = async () => {
     console.log("로그아웃 완료");
   } catch (error) {
     console.error("로그아웃 에러:", error);
+  }
+};
+
+// ==========================================
+// Firestore 댓글 관련 함수들
+// ==========================================
+
+// 댓글 추가 함수
+export const addComment = async (repoId, text, user) => {
+  if (!user || !text.trim()) {
+    console.error("사용자 정보 또는 댓글 내용이 없습니다.");
+    return null;
+  }
+
+  try {
+    const docRef = await addDoc(collection(db, "comments"), {
+      repoId,
+      userId: user.uid,
+      userEmail: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      text: text.trim(),
+      createdAt: new Date(),
+    });
+    console.log("✅ 댓글이 저장되었습니다:", docRef.id);
+    return { id: docRef.id };
+  } catch (error) {
+    console.error("댓글 저장 에러:", error);
+    return null;
+  }
+};
+
+// 특정 repo의 댓글 조회 함수
+export const getComments = async (repoId) => {
+  try {
+    const q = query(collection(db, "comments"), where("repoId", "==", repoId));
+    const querySnapshot = await getDocs(q);
+    const comments = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate(),
+    }));
+    // 클라이언트 사이드에서 최신순 정렬
+    comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    console.log("✅ 댓글 조회 완료:", comments.length);
+    return comments;
+  } catch (error) {
+    console.error("댓글 조회 에러:", error);
+    return [];
+  }
+};
+
+// 댓글 삭제 함수
+export const deleteComment = async (commentId) => {
+  try {
+    await deleteDoc(doc(db, "comments", commentId));
+    console.log("✅ 댓글이 삭제되었습니다:", commentId);
+    return true;
+  } catch (error) {
+    console.error("댓글 삭제 에러:", error);
+    return false;
   }
 };
