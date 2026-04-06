@@ -10,10 +10,20 @@ import {
   MessageCircle,
   Send,
   Trash2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { getReadmeImage, starRepo, unstarRepo } from "../../api/github";
-import { auth, getComments as fetchComments, addComment, deleteComment } from "../../api/firebase";
+import {
+  auth,
+  getComments as fetchComments,
+  addComment,
+  deleteComment,
+  getReplies as fetchReplies,
+  addReply,
+  deleteReply,
+} from "../../api/firebase";
 
 const translateToKorean = async (text) => {
   if (!text) return "";
@@ -44,6 +54,12 @@ const ChortCard = ({ repo }) => {
   const [commentText, setCommentText] = useState("");
   const [showComments, setShowComments] = useState(false);
   const [loadingComments, setLoadingComments] = useState(false);
+
+  // 답글 관련 state
+  const [expandedCommentId, setExpandedCommentId] = useState(null);
+  const [repliesByCommentId, setRepliesByCommentId] = useState({});
+  const [replyTextByCommentId, setReplyTextByCommentId] = useState({});
+  const [loadingReplies, setLoadingReplies] = useState({});
 
   const cardRef = useRef(null);
   const hasFetched = useRef(false); // 💡 이미 데이터를 가져왔는지 기억하는 변수
@@ -172,6 +188,52 @@ const ChortCard = ({ repo }) => {
       const success = await deleteComment(commentId);
       if (success) {
         await loadComments();
+      }
+    }
+  };
+
+  // 답글 토글 함수
+  const toggleReplies = async (commentId) => {
+    if (expandedCommentId === commentId) {
+      setExpandedCommentId(null);
+    } else {
+      setExpandedCommentId(commentId);
+      // 답글 로드
+      if (!repliesByCommentId[commentId]) {
+        await loadReplies(commentId);
+      }
+    }
+  };
+
+  // 답글 로드 함수
+  const loadReplies = async (commentId) => {
+    setLoadingReplies((prev) => ({ ...prev, [commentId]: true }));
+    const replies = await fetchReplies(commentId);
+    setRepliesByCommentId((prev) => ({ ...prev, [commentId]: replies }));
+    setLoadingReplies((prev) => ({ ...prev, [commentId]: false }));
+  };
+
+  // 답글 추가 함수
+  const handleAddReply = async (commentId) => {
+    const user = auth.currentUser;
+    const replyText = replyTextByCommentId[commentId];
+    if (!user || !replyText?.trim()) {
+      return;
+    }
+
+    const result = await addReply(commentId, replyText, user);
+    if (result) {
+      setReplyTextByCommentId((prev) => ({ ...prev, [commentId]: "" }));
+      await loadReplies(commentId);
+    }
+  };
+
+  // 답글 삭제 함수
+  const handleDeleteReply = async (commentId, replyId) => {
+    if (window.confirm("이 답글을 삭제하시겠습니까?")) {
+      const success = await deleteReply(commentId, replyId);
+      if (success) {
+        await loadReplies(commentId);
       }
     }
   };
@@ -419,7 +481,10 @@ const ChortCard = ({ repo }) => {
             <MessageCircle className="w-6 h-6 text-white" />
           </div>
           <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-            {comments.length}
+            {comments.reduce(
+              (sum, comment) => sum + 1 + (comment.replyCount || 0),
+              0,
+            )}
           </span>
         </button>
         <button
@@ -454,7 +519,12 @@ const ChortCard = ({ repo }) => {
           {/* 댓글 헤더 */}
           <div className="flex justify-between items-center p-4 border-b border-white/10">
             <h3 className="text-lg font-bold text-white">
-              댓글 ({comments.length})
+              댓글 (
+              {comments.reduce(
+                (sum, comment) => sum + 1 + (comment.replyCount || 0),
+                0,
+              )}
+              )
             </h3>
             <button
               onClick={() => setShowComments(false)}
@@ -476,44 +546,151 @@ const ChortCard = ({ repo }) => {
               </div>
             ) : (
               comments.map((comment) => (
-                <div
-                  key={comment.id}
-                  className="bg-white/5 border border-white/10 rounded-lg p-3"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      {comment.photoURL && (
-                        <img
-                          src={comment.photoURL}
-                          alt="avatar"
-                          className="w-6 h-6 rounded-full"
-                        />
+                <div key={comment.id}>
+                  {/* 댓글 */}
+                  <div className="bg-white/5 border border-white/10 rounded-lg p-3">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        {comment.photoURL && (
+                          <img
+                            src={comment.photoURL}
+                            alt="avatar"
+                            className="w-6 h-6 rounded-full"
+                          />
+                        )}
+                        <div>
+                          <p className="text-sm font-bold text-white">
+                            {comment.displayName}
+                          </p>
+                          <p className="text-[11px] text-gray-500">
+                            {comment.createdAt
+                              ? new Date(comment.createdAt).toLocaleString(
+                                  "ko-KR",
+                                )
+                              : "방금 전"}
+                          </p>
+                        </div>
+                      </div>
+                      {auth.currentUser?.uid === comment.userId && (
+                        <button
+                          onClick={() => handleDeleteComment(comment.id)}
+                          className="text-red-400 hover:text-red-300 transition"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       )}
-                      <div>
-                        <p className="text-sm font-bold text-white">
-                          {comment.displayName}
+                    </div>
+                    <p className="text-sm text-gray-200 break-words mb-2">
+                      {comment.text}
+                    </p>
+                    {/* 답글 보기 버튼 */}
+                    <button
+                      onClick={() => toggleReplies(comment.id)}
+                      className="text-xs text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+                    >
+                      {expandedCommentId === comment.id ? (
+                        <>
+                          <ChevronUp className="w-3 h-3" />
+                          답글 숨기기
+                        </>
+                      ) : (
+                        <>
+                          <ChevronDown className="w-3 h-3" />
+                          답글 {comment.replyCount || 0}
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* 답글 섹션 */}
+                  {expandedCommentId === comment.id && (
+                    <div className="ml-4 mt-2 space-y-2">
+                      {/* 답글 로딩 */}
+                      {loadingReplies[comment.id] ? (
+                        <div className="flex justify-center py-2">
+                          <div className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      ) : (repliesByCommentId[comment.id] || []).length ===
+                        0 ? (
+                        <p className="text-xs text-gray-500 py-2">
+                          답글이 없습니다.
                         </p>
-                        <p className="text-[11px] text-gray-500">
-                          {comment.createdAt
-                            ? new Date(comment.createdAt).toLocaleString(
-                                "ko-KR",
-                              )
-                            : "방금 전"}
-                        </p>
+                      ) : (
+                        (repliesByCommentId[comment.id] || []).map((reply) => (
+                          <div
+                            key={reply.id}
+                            className="bg-white/3 border border-white/5 rounded p-2"
+                          >
+                            <div className="flex items-start justify-between mb-1">
+                              <div className="flex items-center gap-1.5">
+                                {reply.photoURL && (
+                                  <img
+                                    src={reply.photoURL}
+                                    alt="avatar"
+                                    className="w-4 h-4 rounded-full"
+                                  />
+                                )}
+                                <div>
+                                  <p className="text-xs font-bold text-white">
+                                    {reply.displayName}
+                                  </p>
+                                  <p className="text-[10px] text-gray-600">
+                                    {reply.createdAt
+                                      ? new Date(
+                                          reply.createdAt,
+                                        ).toLocaleTimeString("ko-KR")
+                                      : "방금 전"}
+                                  </p>
+                                </div>
+                              </div>
+                              {auth.currentUser?.uid === reply.userId && (
+                                <button
+                                  onClick={() =>
+                                    handleDeleteReply(comment.id, reply.id)
+                                  }
+                                  className="text-red-400 hover:text-red-300 transition"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-300 break-words">
+                              {reply.text}
+                            </p>
+                          </div>
+                        ))
+                      )}
+
+                      {/* 답글 입력 폼 */}
+                      <div className="flex gap-1 pt-2">
+                        <input
+                          type="text"
+                          placeholder="답글을 입력하세요..."
+                          value={replyTextByCommentId[comment.id] || ""}
+                          onChange={(e) =>
+                            setReplyTextByCommentId((prev) => ({
+                              ...prev,
+                              [comment.id]: e.target.value,
+                            }))
+                          }
+                          onKeyPress={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleAddReply(comment.id);
+                            }
+                          }}
+                          className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white placeholder-gray-600 focus:outline-none focus:border-purple-500 text-xs"
+                        />
+                        <button
+                          onClick={() => handleAddReply(comment.id)}
+                          disabled={!replyTextByCommentId[comment.id]?.trim()}
+                          className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded px-2 py-1 transition flex items-center gap-1"
+                        >
+                          <Send className="w-3 h-3" />
+                        </button>
                       </div>
                     </div>
-                    {auth.currentUser?.uid === comment.userId && (
-                      <button
-                        onClick={() => handleDeleteComment(comment.id)}
-                        className="text-red-400 hover:text-red-300 transition"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-sm text-gray-200 break-words">
-                    {comment.text}
-                  </p>
+                  )}
                 </div>
               ))
             )}

@@ -113,8 +113,21 @@ export const getComments = async (repoId) => {
     }));
     // 클라이언트 사이드에서 최신순 정렬
     comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+
+    // 각 댓글의 대댓글 개수도 로드
+    const commentsWithReplyCounts = await Promise.all(
+      comments.map(async (comment) => {
+        const repliesRef = collection(db, "comments", comment.id, "replies");
+        const repliesSnapshot = await getDocs(repliesRef);
+        return {
+          ...comment,
+          replyCount: repliesSnapshot.size,
+        };
+      }),
+    );
+
     console.log("✅ 댓글 조회 완료:", comments.length);
-    return comments;
+    return commentsWithReplyCounts;
   } catch (error) {
     console.error("댓글 조회 에러:", error);
     return [];
@@ -129,6 +142,67 @@ export const deleteComment = async (commentId) => {
     return true;
   } catch (error) {
     console.error("댓글 삭제 에러:", error);
+    return false;
+  }
+};
+
+// ==========================================
+// Firestore 답글(Reply) 관련 함수들
+// ==========================================
+
+// 답글 추가 함수
+export const addReply = async (commentId, text, user) => {
+  if (!user || !text.trim()) {
+    console.error("사용자 정보 또는 답글 내용이 없습니다.");
+    return null;
+  }
+
+  try {
+    const repliesRef = collection(db, "comments", commentId, "replies");
+    const docRef = await addDoc(repliesRef, {
+      userId: user.uid,
+      userEmail: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      text: text.trim(),
+      createdAt: new Date(),
+    });
+    console.log("✅ 답글이 저장되었습니다:", docRef.id);
+    return { id: docRef.id };
+  } catch (error) {
+    console.error("답글 저장 에러:", error);
+    return null;
+  }
+};
+
+// 특정 댓글의 답글 조회 함수
+export const getReplies = async (commentId) => {
+  try {
+    const repliesRef = collection(db, "comments", commentId, "replies");
+    const q = query(repliesRef);
+    const querySnapshot = await getDocs(q);
+    const replies = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt?.toDate(),
+    }));
+    // 클라이언트 사이드에서 오래된 순 정렬 (답글은 시간순)
+    replies.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+    return replies;
+  } catch (error) {
+    console.error("답글 조회 에러:", error);
+    return [];
+  }
+};
+
+// 답글 삭제 함수
+export const deleteReply = async (commentId, replyId) => {
+  try {
+    await deleteDoc(doc(db, "comments", commentId, "replies", replyId));
+    console.log("✅ 답글이 삭제되었습니다:", replyId);
+    return true;
+  } catch (error) {
+    console.error("답글 삭제 에러:", error);
     return false;
   }
 };

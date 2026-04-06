@@ -13,6 +13,19 @@ service cloud.firestore {
       // 댓글 삭제: 작성자만
       allow delete: if request.auth != null && 
                        resource.data.userId == request.auth.uid;
+
+      // 대댓글(replies) 서브컬렉션
+      match /replies/{replyId} {
+        // 대댓글 읽기: 모든 로그인한 사용자
+        allow read: if request.auth != null;
+        
+        // 대댓글 작성: 로그인한 사용자
+        allow create: if request.auth != null;
+        
+        // 대댓글 삭제: 작성자만
+        allow delete: if request.auth != null && 
+                         resource.data.userId == request.auth.uid;
+      }
     }
 
     // 기타 컬렉션: 차단 (필요시 추가)
