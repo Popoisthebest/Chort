@@ -1,114 +1,159 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { getReadmeImage } from "../../api/github";
-import { getComments as fetchComments } from "../../api/firebase";
+import {
+  getReadmeImage,
+  getReadmeSummary,
+  translateToKorean,
+} from "../../api/github";
+import { getCommentCount } from "../../api/firebase";
 import { recordView, recordSkip } from "../../utils/userProfile";
 
-const translateToKorean = async (text) => {
-  if (!text) return "";
-  try {
-    const safeText = text.substring(0, 800);
-    const response = await fetch(
-      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=${encodeURIComponent(safeText)}`,
-    );
-    const data = await response.json();
-    return data[0].map((item) => item[0]).join("");
-  } catch (error) {
-    console.error("번역 에러:", error);
-    return text;
-  }
+const repoDetailCache = new Map();
+
+const getRepoCacheKey = (repo) => repo.full_name;
+
+const getInitialCacheEntry = (repo) => {
+  const key = getRepoCacheKey(repo);
+  return (
+    repoDetailCache.get(key) || {
+      koDescription: "",
+      originalReadme: "",
+      koReadme: "",
+      readmeImage: null,
+      commentCount: null,
+      heavyLoaded: false,
+    }
+  );
+};
+
+const setRepoCacheEntry = (repo, patch) => {
+  const key = getRepoCacheKey(repo);
+  const prev = getInitialCacheEntry(repo);
+  repoDetailCache.set(key, { ...prev, ...patch });
 };
 
 const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
-  const [readmeImage, setReadmeImage] = useState(null);
+  const cached = getInitialCacheEntry(repo);
 
-  const [originalReadme, setOriginalReadme] = useState("");
-  const [koDescription, setKoDescription] = useState("번역 중...");
-  const [koReadme, setKoReadme] = useState("번역 중...");
+  const [readmeImage, setReadmeImage] = useState(cached.readmeImage || null);
+  const [originalReadme, setOriginalReadme] = useState(
+    cached.originalReadme || "",
+  );
+  const [koDescription, setKoDescription] = useState(
+    cached.koDescription || "번역 중...",
+  );
+  const [koReadme, setKoReadme] = useState(
+    cached.koReadme || "README 불러오는 중...",
+  );
   const [isKorean, setIsKorean] = useState(true);
 
   const cardRef = useRef(null);
-  const hasFetched = useRef(false);
+  const hasLoadedLightRef = useRef(false);
+  const hasLoadedHeavyRef = useRef(cached.heavyLoaded || false);
   const viewStartTime = useRef(null);
   const hasRecordedSignal = useRef(false);
+
   const ogImageUrl = `https://opengraph.githubassets.com/1/${repo.full_name}`;
 
   useEffect(() => {
-    const loadCommentsCount = async () => {
+    let isMounted = true;
+
+    const loadLightData = async () => {
+      if (hasLoadedLightRef.current) return;
+      hasLoadedLightRef.current = true;
+
       try {
-        const loadedComments = await fetchComments(repo.id);
-        const totalCount = loadedComments.reduce(
-          (sum, comment) => sum + 1 + (comment.replyCount || 0),
-          0,
-        );
-        onCommentsCountChange?.(repo.id, totalCount);
+        if (!cached.koDescription) {
+          const translatedDesc = await translateToKorean(
+            repo.description || "",
+          );
+          if (!isMounted) return;
+
+          setKoDescription(translatedDesc || "설명이 없습니다.");
+          setRepoCacheEntry(repo, {
+            koDescription: translatedDesc || "설명이 없습니다.",
+          });
+        } else {
+          setKoDescription(cached.koDescription);
+        }
+
+        if (cached.commentCount !== null) {
+          onCommentsCountChange?.(repo.id, cached.commentCount);
+        } else {
+          const totalCount = await getCommentCount(repo.id);
+          if (!isMounted) return;
+
+          onCommentsCountChange?.(repo.id, totalCount);
+          setRepoCacheEntry(repo, { commentCount: totalCount });
+        }
       } catch (error) {
-        console.error("댓글 수 로드 에러:", error);
-        onCommentsCountChange?.(repo.id, 0);
+        console.error("카드 기본 데이터 로드 에러:", error);
+        if (isMounted && !cached.koDescription) {
+          setKoDescription(repo.description || "설명이 없습니다.");
+        }
       }
     };
 
-    const fetchData = async () => {
+    const loadHeavyData = async () => {
+      if (hasLoadedHeavyRef.current) return;
+      hasLoadedHeavyRef.current = true;
+
       try {
-        const imgUrl = await getReadmeImage(
-          repo.owner.login,
-          repo.name,
-          repo.default_branch,
-        );
-        setReadmeImage(imgUrl);
+        if (
+          cached.originalReadme &&
+          cached.koReadme &&
+          Object.prototype.hasOwnProperty.call(cached, "readmeImage")
+        ) {
+          if (!isMounted) return;
 
-        const translatedDesc = await translateToKorean(repo.description);
-        setKoDescription(translatedDesc);
-
-        let cleanText = "";
-        try {
-          const urls = [
-            `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/main/README.md`,
-            `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/master/README.md`,
-          ];
-
-          for (const url of urls) {
-            const res = await fetch(url);
-            if (res.ok) {
-              const text = await res.text();
-
-              let noHtmlText = text
-                .replace(/<!--[\s\S]*?-->/g, "")
-                .replace(/!\[.*?\]\(.*?\)/g, "")
-                .replace(/<picture>[\s\S]*?<\/picture>/gi, "")
-                .replace(
-                  /<\/?(p|div|a|span|h[1-6]|br|hr|source|img|svg|path)[^>]*>/gi,
-                  "",
-                );
-
-              let lines = noHtmlText.split("\n").slice(0, 8).join("\n");
-              const codeBlockCount = (lines.match(/```/g) || []).length;
-              if (codeBlockCount % 2 !== 0) {
-                lines += "\n```";
-              }
-
-              cleanText = lines;
-              break;
-            }
-          }
-        } catch (error) {
-          console.error("README 파싱 에러:", error);
+          setOriginalReadme(cached.originalReadme);
+          setKoReadme(cached.koReadme);
+          setReadmeImage(cached.readmeImage || null);
+          return;
         }
 
-        setOriginalReadme(cleanText || "");
+        const [imageUrl, readmeText] = await Promise.all([
+          getReadmeImage(repo.owner.login, repo.name, repo.default_branch),
+          getReadmeSummary(repo.owner.login, repo.name, repo.default_branch),
+        ]);
 
-        if (cleanText) {
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          const translatedReadmeText = await translateToKorean(cleanText);
-          setKoReadme(translatedReadmeText);
-        } else {
-          setKoReadme("README 데이터를 찾을 수 없습니다.");
-        }
+        if (!isMounted) return;
 
-        await loadCommentsCount();
+        const safeReadme = readmeText || "";
+        const translatedReadme = safeReadme
+          ? await translateToKorean(safeReadme)
+          : "README 데이터를 찾을 수 없습니다.";
+
+        if (!isMounted) return;
+
+        setReadmeImage(imageUrl || null);
+        setOriginalReadme(safeReadme);
+        setKoReadme(translatedReadme);
+
+        setRepoCacheEntry(repo, {
+          readmeImage: imageUrl || null,
+          originalReadme: safeReadme,
+          koReadme: translatedReadme,
+          heavyLoaded: true,
+        });
       } catch (error) {
-        console.error("카드 데이터 로드 에러:", error);
+        console.error("카드 상세 데이터 로드 에러:", error);
+
+        if (!isMounted) return;
+
+        setKoReadme((prev) =>
+          prev === "README 불러오는 중..."
+            ? "README 데이터를 찾을 수 없습니다."
+            : prev,
+        );
+
+        setRepoCacheEntry(repo, {
+          readmeImage: null,
+          originalReadme: "",
+          koReadme: "README 데이터를 찾을 수 없습니다.",
+          heavyLoaded: true,
+        });
       }
     };
 
@@ -118,27 +163,29 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
           onVisible?.(repo);
-        }
-
-        if (entry.isIntersecting && !hasFetched.current) {
-          hasFetched.current = true;
-          fetchData();
+          loadHeavyData();
         }
 
         if (entry.isIntersecting) {
-          viewStartTime.current = Date.now();
-          hasRecordedSignal.current = false;
-        } else {
-          if (viewStartTime.current && !hasRecordedSignal.current) {
-            hasRecordedSignal.current = true;
-            const dwellMs = Date.now() - viewStartTime.current;
-            if (dwellMs < 800) {
-              recordSkip(repo);
-            } else {
-              recordView(repo, dwellMs);
-            }
-            viewStartTime.current = null;
+          loadLightData();
+        }
+
+        if (entry.isIntersecting) {
+          if (!viewStartTime.current) {
+            viewStartTime.current = Date.now();
+            hasRecordedSignal.current = false;
           }
+        } else if (viewStartTime.current && !hasRecordedSignal.current) {
+          hasRecordedSignal.current = true;
+          const dwellMs = Date.now() - viewStartTime.current;
+
+          if (dwellMs < 800) {
+            recordSkip(repo);
+          } else {
+            recordView(repo, dwellMs);
+          }
+
+          viewStartTime.current = null;
         }
       },
       { threshold: [0.1, 0.6] },
@@ -149,9 +196,10 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     }
 
     return () => {
+      isMounted = false;
       observer.disconnect();
     };
-  }, [repo, onVisible, onCommentsCountChange]);
+  }, [repo, onVisible, onCommentsCountChange, cached]);
 
   const displayDescription = isKorean
     ? koDescription
@@ -172,7 +220,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           alt="background blur"
           className="w-full h-full object-cover blur-3xl scale-110"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0d1117]/80 via-[#0d1117]/95 to-[#0d1117]"></div>
+        <div className="absolute inset-0 bg-gradient-to-b from-[#0d1117]/80 via-[#0d1117]/95 to-[#0d1117]" />
       </div>
 
       <div className="relative z-10 flex flex-col h-full w-full pt-10 pb-10">
@@ -194,6 +242,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                 @{repo.owner.login}
               </span>
             </div>
+
             <h1 className="text-2xl font-black text-white leading-tight break-words">
               {repo.name}
             </h1>
@@ -235,10 +284,11 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
             <h3 className="text-[10px] font-bold text-purple-400 mb-3 uppercase tracking-wider flex items-center gap-1">
               <FileText className="w-3 h-3" /> README Snippet
             </h3>
+
             <div className="text-gray-300 text-xs leading-relaxed break-words break-keep">
               <ReactMarkdown
                 components={{
-                  h1: ({ node, children, ...props }) => (
+                  h1: ({ children, ...props }) => (
                     <h1
                       className="text-lg font-bold text-white mt-2 mb-2 border-b border-gray-700 pb-1 line-clamp-1"
                       {...props}
@@ -246,7 +296,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                       {children}
                     </h1>
                   ),
-                  h2: ({ node, children, ...props }) => (
+                  h2: ({ children, ...props }) => (
                     <h2
                       className="text-md font-bold text-gray-100 mt-2 mb-1 line-clamp-1"
                       {...props}
@@ -254,7 +304,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                       {children}
                     </h2>
                   ),
-                  h3: ({ node, children, ...props }) => (
+                  h3: ({ children, ...props }) => (
                     <h3
                       className="text-sm font-bold text-gray-200 mt-1 mb-1 line-clamp-1"
                       {...props}
@@ -262,17 +312,15 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                       {children}
                     </h3>
                   ),
-                  p: ({ node, ...props }) => <p className="mb-2" {...props} />,
-                  ul: ({ node, ...props }) => (
+                  p: (props) => <p className="mb-2" {...props} />,
+                  ul: (props) => (
                     <ul
                       className="list-disc pl-5 mb-2 text-gray-400"
                       {...props}
                     />
                   ),
-                  li: ({ node, ...props }) => (
-                    <li className="mb-1" {...props} />
-                  ),
-                  code({ node, inline, className, children, ...props }) {
+                  li: (props) => <li className="mb-1" {...props} />,
+                  code({ inline, children, ...props }) {
                     return inline ? (
                       <code
                         className="bg-gray-800 text-red-300 px-1.5 py-0.5 rounded-md text-[10px] font-mono"
@@ -318,6 +366,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
               </span>
             ))}
           </div>
+
           <div
             className="bg-black/80 border border-gray-700 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-900 transition"
             onClick={(e) => {

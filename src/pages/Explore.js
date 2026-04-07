@@ -9,7 +9,7 @@ import {
   X,
   ExternalLink,
 } from "lucide-react";
-import { searchRepos, getTrendingRepos } from "../api/github";
+import { searchRepos, getTrendingReposBatch } from "../api/github";
 import { getProfile } from "../utils/userProfile";
 import { rankRepos } from "../utils/algorithm";
 
@@ -33,13 +33,8 @@ export default function Explore() {
     setLoading(false);
   };
 
-  const getOwnerAvatar = (repo) => {
-    return repo?.owner?.avatar_url || FALLBACK_AVATAR;
-  };
-
-  const getOwnerLogin = (repo) => {
-    return repo?.owner?.login || "unknown";
-  };
+  const getOwnerAvatar = (repo) => repo?.owner?.avatar_url || FALLBACK_AVATAR;
+  const getOwnerLogin = (repo) => repo?.owner?.login || "unknown";
 
   const getCardHeightClass = (repo, index) => {
     const descLength = repo?.description?.length || 0;
@@ -100,15 +95,21 @@ export default function Explore() {
     }
   };
 
+  const toDisplayTag = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return text
+      .split(/[\s-_]+/)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  };
+
   useEffect(() => {
     const loadRecommendedRepos = async () => {
       setLoadingRecommended(true);
 
       try {
-        const pages = [1, 2, 3];
-        const fetched = await Promise.all(
-          pages.map((page) => getTrendingRepos(page)),
-        );
+        const fetched = await getTrendingReposBatch([1, 2, 3]);
 
         const validResults = fetched.filter(
           (pageRepos) => Array.isArray(pageRepos) && !pageRepos?.error,
@@ -178,8 +179,8 @@ export default function Explore() {
       }
     }
 
-    return unique.slice(0, 12);
-  }, [recommendedRepos]);
+    return unique.slice(0, 12).map(toDisplayTag);
+  }, []);
 
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
@@ -246,7 +247,7 @@ export default function Explore() {
 
               {loadingRecommended ? (
                 <div className="flex flex-col items-center justify-center mt-16 opacity-70">
-                  <div className="w-8 h-8 border-4 border-[#2F80ED] border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <div className="w-8 h-8 border-4 border-[#2F80ED] border-t-transparent rounded-full animate-spin mb-4" />
                   <p className="text-sm text-gray-400">
                     추천 레포 불러오는 중...
                   </p>
@@ -326,7 +327,7 @@ export default function Explore() {
 
         {loading && (
           <div className="flex flex-col items-center justify-center mt-20 opacity-70">
-            <div className="w-8 h-8 border-4 border-[#2F80ED] border-t-transparent rounded-full animate-spin mb-4"></div>
+            <div className="w-8 h-8 border-4 border-[#2F80ED] border-t-transparent rounded-full animate-spin mb-4" />
             <p>검색 중...</p>
           </div>
         )}

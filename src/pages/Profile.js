@@ -1,12 +1,5 @@
 import React, { useState, useEffect } from "react";
-import {
-  User,
-  Settings,
-  Trash2,
-  GitBranch,
-  ExternalLink,
-  LogOut,
-} from "lucide-react";
+import { User, Settings, Trash2, LogOut } from "lucide-react";
 import { logoutUser } from "../api/firebase";
 import { useNavigate } from "react-router-dom";
 

@@ -1,27 +1,132 @@
 // src/api/github.js
+import { getGithubToken } from "./firebase";
 
-// 💡 공통 헤더 생성 함수: 로컬 스토리지에 토큰이 있으면 포함해서 보냅니다.
+const CACHE_PREFIX = "chort_cache:";
+const DEFAULT_TTL = 1000 * 60 * 10; // 10분
+const SEARCH_TTL = 1000 * 60 * 5; // 5분
+const README_TTL = 1000 * 60 * 30; // 30분
+const TRANSLATE_TTL = 1000 * 60 * 60 * 6; // 6시간
+
+const memoryCache = new Map();
+const inflightRequests = new Map();
+
 const getHeaders = () => {
-  const token = localStorage.getItem("github_token");
+  const token = getGithubToken();
+
   const headers = {
     Accept: "application/vnd.github.v3+json",
   };
+
   if (token) {
-    headers["Authorization"] = `token ${token}`;
+    headers.Authorization = `token ${token}`;
   }
+
   return headers;
 };
 
-// GitHub 계정에서 repo를 star하는 함수
+const now = () => Date.now();
+
+const buildCacheKey = (key) => `${CACHE_PREFIX}${key}`;
+
+const getCachedValue = (key) => {
+  const fullKey = buildCacheKey(key);
+
+  const mem = memoryCache.get(fullKey);
+  if (mem && mem.expiresAt > now()) {
+    return mem.value;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(fullKey);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed?.expiresAt || parsed.expiresAt <= now()) {
+      sessionStorage.removeItem(fullKey);
+      return null;
+    }
+
+    memoryCache.set(fullKey, parsed);
+    return parsed.value;
+  } catch {
+    return null;
+  }
+};
+
+const setCachedValue = (key, value, ttl = DEFAULT_TTL) => {
+  const fullKey = buildCacheKey(key);
+  const payload = {
+    value,
+    expiresAt: now() + ttl,
+  };
+
+  memoryCache.set(fullKey, payload);
+
+  try {
+    sessionStorage.setItem(fullKey, JSON.stringify(payload));
+  } catch {
+    // sessionStorage quota 초과 시 무시
+  }
+
+  return value;
+};
+
+const cachedRequest = async (key, fetcher, ttl = DEFAULT_TTL) => {
+  const cached = getCachedValue(key);
+  if (cached !== null) {
+    return cached;
+  }
+
+  const fullKey = buildCacheKey(key);
+
+  if (inflightRequests.has(fullKey)) {
+    return inflightRequests.get(fullKey);
+  }
+
+  const promise = (async () => {
+    try {
+      const value = await fetcher();
+      return setCachedValue(key, value, ttl);
+    } finally {
+      inflightRequests.delete(fullKey);
+    }
+  })();
+
+  inflightRequests.set(fullKey, promise);
+  return promise;
+};
+
+export const clearGithubApiCache = () => {
+  const keysToDelete = [];
+
+  for (const key of memoryCache.keys()) {
+    if (key.startsWith(CACHE_PREFIX)) {
+      keysToDelete.push(key);
+    }
+  }
+
+  keysToDelete.forEach((key) => memoryCache.delete(key));
+
+  try {
+    Object.keys(sessionStorage).forEach((key) => {
+      if (key.startsWith(CACHE_PREFIX)) {
+        sessionStorage.removeItem(key);
+      }
+    });
+  } catch {
+    // ignore
+  }
+};
+
 export const starRepo = async (owner, repo) => {
-  const token = localStorage.getItem("github_token");
+  const token = getGithubToken();
+
   if (!token) {
     console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
   }
 
   try {
-    console.log(`⭐ ${owner}/${repo} star 시도 중...`);
     const response = await fetch(
       `https://api.github.com/user/starred/${owner}/${repo}`,
       {
@@ -30,31 +135,29 @@ export const starRepo = async (owner, repo) => {
       },
     );
 
-    const data = await response.json().catch(() => ({}));
-
     if (response.status === 204 || response.ok) {
-      console.log(`✨ GitHub에서 ${repo} star 완료!`);
+      clearGithubApiCache();
       return true;
-    } else {
-      console.error(`❌ Star 실패: ${response.status}`, data);
-      return false;
     }
+
+    const data = await response.json().catch(() => ({}));
+    console.error(`❌ Star 실패: ${response.status}`, data);
+    return false;
   } catch (error) {
     console.error("❌ Star 중 에러:", error);
     return false;
   }
 };
 
-// GitHub 계정에서 repo의 star를 제거하는 함수
 export const unstarRepo = async (owner, repo) => {
-  const token = localStorage.getItem("github_token");
+  const token = getGithubToken();
+
   if (!token) {
     console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
   }
 
   try {
-    console.log(`🗑️ ${owner}/${repo} star 제거 시도 중...`);
     const response = await fetch(
       `https://api.github.com/user/starred/${owner}/${repo}`,
       {
@@ -63,110 +166,193 @@ export const unstarRepo = async (owner, repo) => {
       },
     );
 
-    const data = await response.json().catch(() => ({}));
-
     if (response.status === 204 || response.ok) {
-      console.log(`✨ GitHub에서 ${repo} star 제거 완료!`);
+      clearGithubApiCache();
       return true;
-    } else {
-      console.error(`❌ Unstar 실패: ${response.status}`, data);
-      return false;
     }
+
+    const data = await response.json().catch(() => ({}));
+    console.error(`❌ Unstar 실패: ${response.status}`, data);
+    return false;
   } catch (error) {
     console.error("❌ Unstar 중 에러:", error);
     return false;
   }
 };
 
-// 1. 현재 피드(Feed.js)에서 사용하는 메인 데이터 호출 함수
 export const getTrendingRepos = async (page = 1) => {
   const date = new Date();
   date.setDate(date.getDate() - 7);
   const formattedDate = date.toISOString().split("T")[0];
-
   const query = `created:>${formattedDate}`;
-  const url = `https://api.github.com/search/repositories?q=${query}&sort=stars&order=desc&per_page=10&page=${page}`;
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=10&page=${page}`;
 
-  try {
-    // 💡 토큰 헤더를 같이 보냅니다! (한도 해제)
-    const response = await fetch(url, { headers: getHeaders() });
-    const data = await response.json();
+  return cachedRequest(
+    `trending:${page}:${formattedDate}`,
+    async () => {
+      const response = await fetch(url, { headers: getHeaders() });
+      const data = await response.json();
 
-    // 💡 429 에러(한도 초과)가 발생하면 Feed.js가 루프를 멈출 수 있게 에러 상태를 반환합니다.
-    if (!response.ok || data.message) {
-      return {
-        error: true,
-        message: data.message || `HTTP Error: ${response.status}`,
-      };
-    }
+      if (!response.ok || data.message) {
+        return {
+          error: true,
+          message: data.message || `HTTP Error: ${response.status}`,
+        };
+      }
 
-    return data.items || [];
-  } catch (error) {
-    console.error("데이터 로드 실패:", error);
-    return { error: true, message: "네트워크 에러" };
-  }
+      return data.items || [];
+    },
+    DEFAULT_TTL,
+  );
 };
 
-// 2. 검색 시 사용하는 함수
+export const getTrendingReposBatch = async (pages = [1, 2, 3]) => {
+  const results = await Promise.all(
+    pages.map((page) => getTrendingRepos(page)),
+  );
+  return results;
+};
+
 export const searchRepos = async (keyword) => {
   if (!keyword) return [];
 
+  const normalizedKeyword = keyword.trim().toLowerCase();
   const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(keyword)}&sort=stars&order=desc&per_page=20`;
 
-  try {
-    // 💡 토큰 헤더 추가
-    const response = await fetch(url, { headers: getHeaders() });
-    const data = await response.json();
-    return data.items || [];
-  } catch (error) {
-    console.error("검색 데이터를 불러오는데 실패했습니다:", error);
-    return [];
-  }
-};
-
-// 3. README에서 첫 번째 이미지나 GIF URL을 추출하는 함수
-export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
-  const urls = [
-    `https://raw.githubusercontent.com/${owner}/${repo}/main/README.md`,
-    `https://raw.githubusercontent.com/${owner}/${repo}/master/README.md`,
-  ];
-
-  for (const url of urls) {
-    try {
-      // 💡 토큰 헤더 추가 (raw 파일 요청 시에도 토큰을 넣으면 더 안정적입니다)
+  return cachedRequest(
+    `search:${normalizedKeyword}`,
+    async () => {
       const response = await fetch(url, { headers: getHeaders() });
-      if (!response.ok) continue;
+      const data = await response.json();
 
-      const text = await response.text();
-
-      const markdownImgRegex =
-        /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg)(?:\?.*?)?)\)/i;
-      const htmlImgRegex =
-        /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg)(?:\?.*?)?)["']/i;
-
-      const mdMatch = text.match(markdownImgRegex);
-      const htmlMatch = text.match(htmlImgRegex);
-
-      let imageUrl = mdMatch ? mdMatch[1] : htmlMatch ? htmlMatch[1] : null;
-
-      if (imageUrl && !imageUrl.startsWith("http")) {
-        const branch = url.includes("/main/") ? "main" : "master";
-        imageUrl = imageUrl.startsWith("/")
-          ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}${imageUrl}`
-          : `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${imageUrl}`;
+      if (!response.ok || data.message) {
+        console.error("검색 실패:", data.message || response.status);
+        return [];
       }
 
-      if (imageUrl) return imageUrl;
-    } catch (error) {
-      console.error("README 파싱 에러:", error);
-    }
-  }
-  return null;
+      return data.items || [];
+    },
+    SEARCH_TTL,
+  );
 };
 
-// ==========================================
-// 아래는 이전 버전의 함수들입니다. (필요 시 사용)
-// ==========================================
+const cleanReadmeText = (text) => {
+  let noHtmlText = text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/!\[.*?\]\(.*?\)/g, "")
+    .replace(/<picture>[\s\S]*?<\/picture>/gi, "")
+    .replace(/<\/?(p|div|a|span|h[1-6]|br|hr|source|img|svg|path)[^>]*>/gi, "");
+
+  let lines = noHtmlText.split("\n").slice(0, 8).join("\n");
+  const codeBlockCount = (lines.match(/```/g) || []).length;
+
+  if (codeBlockCount % 2 !== 0) {
+    lines += "\n```";
+  }
+
+  return lines.trim();
+};
+
+export const getReadmeSummary = async (owner, repo, defaultBranch = "main") => {
+  const candidateBranches = [defaultBranch, "main", "master"].filter(Boolean);
+  const uniqueBranches = [...new Set(candidateBranches)];
+
+  return cachedRequest(
+    `readme-summary:${owner}/${repo}:${uniqueBranches.join(",")}`,
+    async () => {
+      for (const branch of uniqueBranches) {
+        const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`;
+
+        try {
+          const response = await fetch(url, { headers: getHeaders() });
+          if (!response.ok) continue;
+
+          const text = await response.text();
+          const cleaned = cleanReadmeText(text);
+
+          if (cleaned) {
+            return cleaned;
+          }
+        } catch (error) {
+          console.error("README 로드 에러:", error);
+        }
+      }
+
+      return "";
+    },
+    README_TTL,
+  );
+};
+
+export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
+  const candidateBranches = [defaultBranch, "main", "master"].filter(Boolean);
+  const uniqueBranches = [...new Set(candidateBranches)];
+
+  return cachedRequest(
+    `readme-image:${owner}/${repo}:${uniqueBranches.join(",")}`,
+    async () => {
+      for (const branch of uniqueBranches) {
+        const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`;
+
+        try {
+          const response = await fetch(url, { headers: getHeaders() });
+          if (!response.ok) continue;
+
+          const text = await response.text();
+
+          const markdownImgRegex =
+            /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
+          const htmlImgRegex =
+            /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)["']/i;
+
+          const mdMatch = text.match(markdownImgRegex);
+          const htmlMatch = text.match(htmlImgRegex);
+
+          let imageUrl = mdMatch ? mdMatch[1] : htmlMatch ? htmlMatch[1] : null;
+
+          if (imageUrl && !imageUrl.startsWith("http")) {
+            imageUrl = imageUrl.startsWith("/")
+              ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}${imageUrl}`
+              : `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${imageUrl}`;
+          }
+
+          if (imageUrl) {
+            return imageUrl;
+          }
+        } catch (error) {
+          console.error("README 이미지 파싱 에러:", error);
+        }
+      }
+
+      return null;
+    },
+    README_TTL,
+  );
+};
+
+export const translateToKorean = async (text) => {
+  if (!text) return "";
+
+  const safeText = text.substring(0, 800);
+  const cacheKey = `translate:ko:${safeText}`;
+
+  return cachedRequest(
+    cacheKey,
+    async () => {
+      try {
+        const response = await fetch(
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=${encodeURIComponent(safeText)}`,
+        );
+        const data = await response.json();
+        return data?.[0]?.map((item) => item[0]).join("") || text;
+      } catch (error) {
+        console.error("번역 에러:", error);
+        return text;
+      }
+    },
+    TRANSLATE_TTL,
+  );
+};
 
 const MAX_SEEN_HISTORY = 300;
 
@@ -187,7 +373,7 @@ export const fetchTrendingRepos = async (page = 1) => {
   try {
     const response = await fetch(
       `https://api.github.com/search/repositories?q=created:>2024-01-01&sort=stars&order=desc&page=${page}&per_page=30`,
-      { headers: getHeaders() }, // 💡 토큰 헤더 추가
+      { headers: getHeaders() },
     );
     const data = await response.json();
 
@@ -199,9 +385,6 @@ export const fetchTrendingRepos = async (page = 1) => {
     const freshData = filterAndRecordSeenRepos(data.items);
 
     if (freshData.length === 0 && data.items && data.items.length > 0) {
-      console.log(
-        `[Chort 필터] ${page}페이지는 이미 다 보셨네요. 다음 페이지 탐색 중... 🚀`,
-      );
       return fetchTrendingRepos(page + 1);
     }
 

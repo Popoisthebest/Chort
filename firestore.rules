@@ -1,34 +1,77 @@
-rules_version='2'
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 댓글 컬렉션: 로그인한 사용자만 접근 가능
-    match /comments/{commentId} {
-      // 댓글 읽기: 모든 로그인한 사용자
-      allow read: if request.auth != null;
-      
-      // 댓글 작성: 로그인한 사용자
-      allow create: if request.auth != null;
-      
-      // 댓글 삭제: 작성자만
-      allow delete: if request.auth != null && 
-                       resource.data.userId == request.auth.uid;
 
-      // 대댓글(replies) 서브컬렉션
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isShortString(value, maxLen) {
+      return value is string && value.size() > 0 && value.size() <= maxLen;
+    }
+
+    function isOptionalShortString(value, maxLen) {
+      return value == null || (value is string && value.size() <= maxLen);
+    }
+
+    match /comments/{commentId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly([
+          "repoId",
+          "text",
+          "userId",
+          "displayName",
+          "photoURL",
+          "createdAt",
+          "replyCount"
+        ])
+        && isShortString(request.resource.data.repoId, 120)
+        && isShortString(request.resource.data.text, 2000)
+        && request.resource.data.userId == request.auth.uid
+        && isShortString(request.resource.data.displayName, 120)
+        && isOptionalShortString(request.resource.data.photoURL, 500)
+        && request.resource.data.replyCount == 0;
+
+      allow delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+
+      allow update: if isSignedIn()
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["replyCount"])
+        && request.resource.data.replyCount is int
+        && request.resource.data.replyCount >= 0
+        && request.resource.data.repoId == resource.data.repoId
+        && request.resource.data.text == resource.data.text
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.displayName == resource.data.displayName
+        && request.resource.data.photoURL == resource.data.photoURL
+        && request.resource.data.createdAt == resource.data.createdAt;
+
       match /replies/{replyId} {
-        // 대댓글 읽기: 모든 로그인한 사용자
-        allow read: if request.auth != null;
-        
-        // 대댓글 작성: 로그인한 사용자
-        allow create: if request.auth != null;
-        
-        // 대댓글 삭제: 작성자만
-        allow delete: if request.auth != null && 
-                         resource.data.userId == request.auth.uid;
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn()
+          && request.resource.data.keys().hasOnly([
+            "userId",
+            "displayName",
+            "photoURL",
+            "text",
+            "createdAt"
+          ])
+          && request.resource.data.userId == request.auth.uid
+          && isShortString(request.resource.data.displayName, 120)
+          && isOptionalShortString(request.resource.data.photoURL, 500)
+          && isShortString(request.resource.data.text, 1000);
+
+        allow delete: if isSignedIn()
+          && resource.data.userId == request.auth.uid;
+
+        allow update: if false;
       }
     }
 
-    // 기타 컬렉션: 차단 (필요시 추가)
     match /{document=**} {
       allow read, write: if false;
     }
