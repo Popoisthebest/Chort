@@ -19,7 +19,6 @@ import {
   serverTimestamp,
   runTransaction,
 } from "firebase/firestore";
-import { normalizeComment, normalizeReply } from "../utils/normalizers";
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -155,12 +154,20 @@ export const getComments = async (repoId) => {
     const querySnapshot = await getDocs(q);
 
     const comments = querySnapshot.docs
-      .map((snapshot) =>
-        normalizeComment({
+      .map((snapshot) => {
+        const data = snapshot.data();
+
+        return {
           id: snapshot.id,
-          ...snapshot.data(),
-        }),
-      )
+          repoId: data.repoId,
+          text: data.text || "",
+          userId: data.userId || "",
+          displayName: data.displayName || "익명",
+          photoURL: data.photoURL || "",
+          createdAt: normalizeDate(data.createdAt),
+          replyCount: Number.isFinite(data.replyCount) ? data.replyCount : 0,
+        };
+      })
       .sort(sortByCreatedAtDesc);
 
     const totalCount = comments.reduce(
@@ -293,12 +300,18 @@ export const getReplies = async (commentId) => {
     const querySnapshot = await getDocs(q);
 
     return querySnapshot.docs
-      .map((snapshot) =>
-        normalizeReply({
+      .map((snapshot) => {
+        const data = snapshot.data();
+
+        return {
           id: snapshot.id,
-          ...snapshot.data(),
-        }),
-      )
+          userId: data.userId || "",
+          displayName: data.displayName || "익명",
+          photoURL: data.photoURL || "",
+          text: data.text || "",
+          createdAt: normalizeDate(data.createdAt),
+        };
+      })
       .sort(sortByCreatedAtAsc);
   } catch (error) {
     console.error("답글 로드 에러:", error);
