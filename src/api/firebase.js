@@ -41,8 +41,22 @@ const githubProvider = new GithubAuthProvider();
 githubProvider.addScope("public_repo");
 
 const GITHUB_TOKEN_KEY = "github_token";
+const GITHUB_PROFILE_KEY = "github_profile";
 const COMMENT_COUNT_CACHE_PREFIX = "chort_comment_count:";
 const COMMENT_COUNT_TTL = 1000 * 60 * 2;
+
+const trimText = (value) => {
+  if (typeof value !== "string") return "";
+  return value.trim();
+};
+
+const pickFirstNonEmpty = (...values) => {
+  for (const value of values) {
+    const text = trimText(value);
+    if (text) return text;
+  }
+  return "";
+};
 
 const normalizeDate = (value) => {
   if (!value) return null;
@@ -73,6 +87,146 @@ const sortByCreatedAtAsc = (a, b) => {
   const aTime = a.createdAt ? a.createdAt.getTime() : 0;
   const bTime = b.createdAt ? b.createdAt.getTime() : 0;
   return aTime - bTime;
+};
+
+const normalizeGithubProfile = (profile = {}) => {
+  const login = pickFirstNonEmpty(
+    profile.login,
+    profile.screenName,
+    profile.username,
+  );
+
+  const displayName = pickFirstNonEmpty(
+    login,
+    profile.name,
+    profile.displayName,
+    profile.email,
+  );
+
+  const photoURL = pickFirstNonEmpty(
+    profile.avatar_url,
+    profile.avatarUrl,
+    profile.photoURL,
+    profile.photoUrl,
+    profile.picture,
+  );
+
+  return {
+    login,
+    displayName: displayName || "익명",
+    photoURL,
+  };
+};
+
+const saveGithubProfile = (profile) => {
+  try {
+    const normalized = normalizeGithubProfile(profile);
+    sessionStorage.setItem(GITHUB_PROFILE_KEY, JSON.stringify(normalized));
+    return normalized;
+  } catch {
+    return normalizeGithubProfile(profile);
+  }
+};
+
+const getSavedGithubProfile = () => {
+  try {
+    const raw = sessionStorage.getItem(GITHUB_PROFILE_KEY);
+    if (!raw) return null;
+    return normalizeGithubProfile(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
+
+const getGithubProfileFromLoginResult = (result) => {
+  const profile = result?.additionalUserInfo?.profile || {};
+  const user = result?.user;
+  const providerProfile = user?.providerData?.find(
+    (item) => item?.providerId === "github.com",
+  );
+
+  return normalizeGithubProfile({
+    login: pickFirstNonEmpty(
+      profile.login,
+      profile.screenName,
+      user?.reloadUserInfo?.screenName,
+      providerProfile?.displayName,
+      user?.displayName,
+      user?.email,
+    ),
+    name: pickFirstNonEmpty(
+      profile.name,
+      user?.displayName,
+      providerProfile?.displayName,
+    ),
+    avatar_url: pickFirstNonEmpty(
+      profile.avatar_url,
+      user?.photoURL,
+      providerProfile?.photoURL,
+      user?.reloadUserInfo?.photoUrl,
+    ),
+    email: user?.email,
+  });
+};
+
+const getGithubProfileFromUser = (user) => {
+  if (!user) {
+    return normalizeGithubProfile({});
+  }
+
+  const providerProfile = user?.providerData?.find(
+    (item) => item?.providerId === "github.com",
+  );
+
+  return normalizeGithubProfile({
+    login: pickFirstNonEmpty(
+      user?.reloadUserInfo?.screenName,
+      providerProfile?.displayName,
+      user?.displayName,
+      user?.email,
+    ),
+    name: pickFirstNonEmpty(
+      user?.displayName,
+      providerProfile?.displayName,
+      user?.reloadUserInfo?.displayName,
+    ),
+    avatar_url: pickFirstNonEmpty(
+      user?.photoURL,
+      providerProfile?.photoURL,
+      user?.reloadUserInfo?.photoUrl,
+    ),
+    email: user?.email,
+  });
+};
+
+const resolveGithubIdentity = (user) => {
+  const cachedProfile = getSavedGithubProfile();
+  const liveProfile = getGithubProfileFromUser(user);
+
+  const merged = normalizeGithubProfile({
+    login: pickFirstNonEmpty(cachedProfile?.login, liveProfile?.login),
+    name: pickFirstNonEmpty(
+      cachedProfile?.displayName,
+      liveProfile?.displayName,
+      user?.displayName,
+      user?.email,
+    ),
+    avatar_url: pickFirstNonEmpty(
+      cachedProfile?.photoURL,
+      liveProfile?.photoURL,
+    ),
+    email: user?.email,
+  });
+
+  if (merged.displayName || merged.photoURL) {
+    saveGithubProfile(merged);
+  }
+
+  return {
+    displayName:
+      merged.displayName || user?.displayName || user?.email || "익명",
+    photoURL: merged.photoURL || user?.photoURL || "",
+  };
 };
 
 const getCommentCountCacheKey = (repoId) =>
@@ -126,6 +280,9 @@ export const loginWithGithub = async () => {
       sessionStorage.setItem(GITHUB_TOKEN_KEY, credential.accessToken);
     }
 
+    const githubProfile = getGithubProfileFromLoginResult(result);
+    saveGithubProfile(githubProfile);
+
     return result.user;
   } catch (error) {
     console.error("로그인 에러:", error);
@@ -137,6 +294,7 @@ export const logoutUser = async () => {
   try {
     await signOut(auth);
     sessionStorage.removeItem(GITHUB_TOKEN_KEY);
+    sessionStorage.removeItem(GITHUB_PROFILE_KEY);
     console.log("✅ 로그아웃 성공");
   } catch (error) {
     console.error("로그아웃 에러:", error);
@@ -200,12 +358,14 @@ export const addComment = async (repoId, text, user) => {
   if (!user || !text.trim()) return null;
 
   try {
+    const identity = resolveGithubIdentity(user);
+
     const docRef = await addDoc(collection(db, "comments"), {
       repoId: String(repoId),
       text: text.trim(),
       userId: user.uid,
-      displayName: user.displayName || user.email || "익명",
-      photoURL: user.photoURL || "",
+      displayName: identity.displayName,
+      photoURL: identity.photoURL,
       createdAt: serverTimestamp(),
       replyCount: 0,
     });
@@ -261,11 +421,12 @@ export const addReply = async (commentId, text, user) => {
 
     const repoId = commentSnap.data()?.repoId || null;
     const repliesRef = collection(db, "comments", commentId, "replies");
+    const identity = resolveGithubIdentity(user);
 
     const replyDoc = await addDoc(repliesRef, {
       userId: user.uid,
-      displayName: user.displayName || user.email || "익명",
-      photoURL: user.photoURL || "",
+      displayName: identity.displayName,
+      photoURL: identity.photoURL,
       text: text.trim(),
       createdAt: serverTimestamp(),
     });

@@ -7,11 +7,11 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isShortString(value, maxLen) {
+    function isNonEmptyString(value, maxLen) {
       return value is string && value.size() > 0 && value.size() <= maxLen;
     }
 
-    function isOptionalShortString(value, maxLen) {
+    function isOptionalString(value, maxLen) {
       return value == null || (value is string && value.size() <= maxLen);
     }
 
@@ -28,11 +28,12 @@ service cloud.firestore {
           "createdAt",
           "replyCount"
         ])
-        && isShortString(request.resource.data.repoId, 120)
-        && isShortString(request.resource.data.text, 2000)
+        && isNonEmptyString(request.resource.data.repoId, 120)
+        && isNonEmptyString(request.resource.data.text, 2000)
         && request.resource.data.userId == request.auth.uid
-        && isShortString(request.resource.data.displayName, 120)
-        && isOptionalShortString(request.resource.data.photoURL, 500)
+        && isNonEmptyString(request.resource.data.displayName, 120)
+        && isOptionalString(request.resource.data.photoURL, 500)
+        && request.resource.data.replyCount is int
         && request.resource.data.replyCount == 0;
 
       allow delete: if isSignedIn()
@@ -41,13 +42,7 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && request.resource.data.diff(resource.data).changedKeys().hasOnly(["replyCount"])
         && request.resource.data.replyCount is int
-        && request.resource.data.replyCount >= 0
-        && request.resource.data.repoId == resource.data.repoId
-        && request.resource.data.text == resource.data.text
-        && request.resource.data.userId == resource.data.userId
-        && request.resource.data.displayName == resource.data.displayName
-        && request.resource.data.photoURL == resource.data.photoURL
-        && request.resource.data.createdAt == resource.data.createdAt;
+        && request.resource.data.replyCount >= 0;
 
       match /replies/{replyId} {
         allow read: if isSignedIn();
@@ -61,9 +56,9 @@ service cloud.firestore {
             "createdAt"
           ])
           && request.resource.data.userId == request.auth.uid
-          && isShortString(request.resource.data.displayName, 120)
-          && isOptionalShortString(request.resource.data.photoURL, 500)
-          && isShortString(request.resource.data.text, 1000);
+          && isNonEmptyString(request.resource.data.displayName, 120)
+          && isOptionalString(request.resource.data.photoURL, 500)
+          && isNonEmptyString(request.resource.data.text, 1000);
 
         allow delete: if isSignedIn()
           && resource.data.userId == request.auth.uid;

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 import {
   getReadmeImage,
   getReadmeSummary,
+  getRenderedReadmeHtml,
   translateToKorean,
 } from "../../api/github";
 import { getCommentCount } from "../../api/firebase";
@@ -18,8 +18,8 @@ const getInitialCacheEntry = (repo) => {
   return (
     repoDetailCache.get(key) || {
       koDescription: "",
-      originalReadme: "",
-      koReadme: "",
+      renderedReadmeHtml: "",
+      fallbackReadmeText: "",
       readmeImage: null,
       commentCount: null,
       lightLoaded: false,
@@ -34,6 +34,74 @@ const setRepoCacheEntry = (repo, patch) => {
   repoDetailCache.set(key, { ...prev, ...patch });
 };
 
+const sanitizeRenderedHtml = (html) => {
+  if (!html || typeof window === "undefined") return "";
+
+  try {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    const blockedSelectors = [
+      "script",
+      "style",
+      "iframe",
+      "object",
+      "embed",
+      "form",
+      "input",
+      "button",
+      "textarea",
+      "select",
+      "meta",
+      "link",
+    ];
+
+    doc.querySelectorAll(blockedSelectors.join(",")).forEach((node) => {
+      node.remove();
+    });
+
+    doc.querySelectorAll("*").forEach((node) => {
+      [...node.attributes].forEach((attr) => {
+        const name = attr.name.toLowerCase();
+        const value = attr.value;
+
+        if (name.startsWith("on")) {
+          node.removeAttribute(attr.name);
+          return;
+        }
+
+        if (
+          (name === "href" || name === "src") &&
+          /^\s*javascript:/i.test(value)
+        ) {
+          node.removeAttribute(attr.name);
+          return;
+        }
+
+        if (name === "style") {
+          node.removeAttribute(attr.name);
+          return;
+        }
+      });
+
+      if (node.tagName === "A") {
+        node.setAttribute("target", "_blank");
+        node.setAttribute("rel", "noreferrer noopener");
+      }
+
+      if (node.tagName === "IMG") {
+        node.setAttribute("loading", "lazy");
+        node.setAttribute("referrerpolicy", "no-referrer");
+      }
+    });
+
+    return doc.body.innerHTML || "";
+  } catch (error) {
+    console.error("README HTML sanitize 에러:", error);
+    return "";
+  }
+};
+
 const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   const repoKey = repo.full_name;
   const cacheEntry = useMemo(() => getInitialCacheEntry(repo), [repoKey]);
@@ -41,16 +109,14 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   const [readmeImage, setReadmeImage] = useState(
     cacheEntry.readmeImage || null,
   );
-  const [originalReadme, setOriginalReadme] = useState(
-    cacheEntry.originalReadme || "",
-  );
   const [koDescription, setKoDescription] = useState(
     cacheEntry.koDescription || "번역 중...",
   );
-  const [koReadme, setKoReadme] = useState(
-    cacheEntry.heavyLoaded
-      ? cacheEntry.koReadme || "README 데이터를 찾을 수 없습니다."
-      : "README 불러오는 중...",
+  const [renderedReadmeHtml, setRenderedReadmeHtml] = useState(
+    cacheEntry.renderedReadmeHtml || "",
+  );
+  const [fallbackReadmeText, setFallbackReadmeText] = useState(
+    cacheEntry.fallbackReadmeText || "",
   );
   const [isKorean, setIsKorean] = useState(true);
 
@@ -74,13 +140,9 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     const latestCache = getInitialCacheEntry(repo);
 
     setReadmeImage(latestCache.readmeImage || null);
-    setOriginalReadme(latestCache.originalReadme || "");
     setKoDescription(latestCache.koDescription || "번역 중...");
-    setKoReadme(
-      latestCache.heavyLoaded
-        ? latestCache.koReadme || "README 데이터를 찾을 수 없습니다."
-        : "README 불러오는 중...",
-    );
+    setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
+    setFallbackReadmeText(latestCache.fallbackReadmeText || "");
     setIsKorean(true);
 
     lightLoadedRef.current = latestCache.lightLoaded || false;
@@ -145,36 +207,38 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           if (cancelled) return;
 
           setReadmeImage(latestCache.readmeImage || null);
-          setOriginalReadme(latestCache.originalReadme || "");
-          setKoReadme(
-            latestCache.koReadme || "README 데이터를 찾을 수 없습니다.",
+          setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
+          setFallbackReadmeText(
+            latestCache.fallbackReadmeText ||
+              "README 데이터를 찾을 수 없습니다.",
           );
           heavyLoadedRef.current = true;
           return;
         }
 
-        const [imageUrl, readmeText] = await Promise.all([
+        const [imageUrl, html, summaryText] = await Promise.all([
           getReadmeImage(repo.owner.login, repo.name, repo.default_branch),
+          getRenderedReadmeHtml(
+            repo.owner.login,
+            repo.name,
+            repo.default_branch,
+          ),
           getReadmeSummary(repo.owner.login, repo.name, repo.default_branch),
         ]);
 
         if (cancelled) return;
 
-        const safeReadme = readmeText || "";
-        const translatedReadme = safeReadme
-          ? await translateToKorean(safeReadme)
-          : "README 데이터를 찾을 수 없습니다.";
-
-        if (cancelled) return;
+        const safeHtml = sanitizeRenderedHtml(html || "");
+        const safeFallback = summaryText || "README 데이터를 찾을 수 없습니다.";
 
         setReadmeImage(imageUrl || null);
-        setOriginalReadme(safeReadme);
-        setKoReadme(translatedReadme || "README 데이터를 찾을 수 없습니다.");
+        setRenderedReadmeHtml(safeHtml);
+        setFallbackReadmeText(safeFallback);
 
         setRepoCacheEntry(repo, {
           readmeImage: imageUrl || null,
-          originalReadme: safeReadme,
-          koReadme: translatedReadme || "README 데이터를 찾을 수 없습니다.",
+          renderedReadmeHtml: safeHtml,
+          fallbackReadmeText: safeFallback,
           heavyLoaded: true,
         });
 
@@ -184,14 +248,14 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         if (!cancelled) {
           setReadmeImage(null);
-          setOriginalReadme("");
-          setKoReadme("README 데이터를 찾을 수 없습니다.");
+          setRenderedReadmeHtml("");
+          setFallbackReadmeText("README 데이터를 찾을 수 없습니다.");
         }
 
         setRepoCacheEntry(repo, {
           readmeImage: null,
-          originalReadme: "",
-          koReadme: "README 데이터를 찾을 수 없습니다.",
+          renderedReadmeHtml: "",
+          fallbackReadmeText: "README 데이터를 찾을 수 없습니다.",
           heavyLoaded: true,
         });
 
@@ -247,10 +311,6 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     ? koDescription
     : repo.description || "No description provided.";
 
-  const displayReadme = isKorean
-    ? koReadme
-    : originalReadme || "No README data found.";
-
   return (
     <div
       ref={cardRef}
@@ -296,6 +356,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
               setIsKorean(!isKorean);
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full text-xs font-bold text-gray-200 transition-colors shrink-0"
+            title="설명 언어 전환"
           >
             <Languages className="w-4 h-4" />
             {isKorean ? "KR" : "EN"}
@@ -327,62 +388,18 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
               <FileText className="w-3 h-3" /> README Snippet
             </h3>
 
-            <div className="text-gray-300 text-xs leading-relaxed break-words break-keep">
-              <ReactMarkdown
-                components={{
-                  h1: ({ children, ...props }) => (
-                    <h1
-                      className="text-lg font-bold text-white mt-2 mb-2 border-b border-gray-700 pb-1 line-clamp-1"
-                      {...props}
-                    >
-                      {children}
-                    </h1>
-                  ),
-                  h2: ({ children, ...props }) => (
-                    <h2
-                      className="text-md font-bold text-gray-100 mt-2 mb-1 line-clamp-1"
-                      {...props}
-                    >
-                      {children}
-                    </h2>
-                  ),
-                  h3: ({ children, ...props }) => (
-                    <h3
-                      className="text-sm font-bold text-gray-200 mt-1 mb-1 line-clamp-1"
-                      {...props}
-                    >
-                      {children}
-                    </h3>
-                  ),
-                  p: (props) => <p className="mb-2" {...props} />,
-                  ul: (props) => (
-                    <ul
-                      className="list-disc pl-5 mb-2 text-gray-400"
-                      {...props}
-                    />
-                  ),
-                  li: (props) => <li className="mb-1" {...props} />,
-                  code({ inline, children, ...props }) {
-                    return inline ? (
-                      <code
-                        className="bg-gray-800 text-red-300 px-1.5 py-0.5 rounded-md text-[10px] font-mono"
-                        {...props}
-                      >
-                        {children}
-                      </code>
-                    ) : (
-                      <div className="relative mb-2">
-                        <pre className="bg-[#161b22] border border-gray-700 p-3 rounded-lg overflow-hidden text-[10px] font-mono text-green-400">
-                          <code {...props}>{children}</code>
-                        </pre>
-                      </div>
-                    );
-                  },
-                }}
-              >
-                {displayReadme}
-              </ReactMarkdown>
-            </div>
+            {renderedReadmeHtml ? (
+              <div className="relative h-full overflow-hidden">
+                <div
+                  className="readme-rendered text-gray-300 text-xs leading-relaxed break-words"
+                  dangerouslySetInnerHTML={{ __html: renderedReadmeHtml }}
+                />
+              </div>
+            ) : (
+              <div className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
+                {fallbackReadmeText || "README 불러오는 중..."}
+              </div>
+            )}
 
             <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#151a22] to-transparent pointer-events-none rounded-b-xl flex items-end justify-center pb-2">
               <span className="text-[10px] text-gray-500 font-semibold mb-1">
@@ -426,6 +443,127 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           </div>
         </div>
       </div>
+
+      <style>
+        {`
+          .readme-rendered {
+            max-height: 100%;
+            overflow: hidden;
+          }
+
+          .readme-rendered h1,
+          .readme-rendered h2,
+          .readme-rendered h3,
+          .readme-rendered h4,
+          .readme-rendered h5,
+          .readme-rendered h6 {
+            color: white;
+            font-weight: 700;
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+            line-height: 1.3;
+          }
+
+          .readme-rendered h1 { font-size: 1rem; }
+          .readme-rendered h2 { font-size: 0.95rem; }
+          .readme-rendered h3 { font-size: 0.9rem; }
+
+          .readme-rendered p,
+          .readme-rendered ul,
+          .readme-rendered ol,
+          .readme-rendered blockquote,
+          .readme-rendered table,
+          .readme-rendered pre {
+            margin-bottom: 0.6rem;
+          }
+
+          .readme-rendered a {
+            color: #93c5fd;
+            text-decoration: none;
+          }
+
+          .readme-rendered a:hover {
+            text-decoration: underline;
+          }
+
+          .readme-rendered code {
+            background: rgba(255, 255, 255, 0.08);
+            color: #fda4af;
+            padding: 0.1rem 0.3rem;
+            border-radius: 0.35rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.72rem;
+          }
+
+          .readme-rendered pre {
+            background: #161b22;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 0.75rem;
+            padding: 0.75rem;
+            overflow: hidden;
+          }
+
+          .readme-rendered pre code {
+            background: transparent;
+            color: #86efac;
+            padding: 0;
+            border-radius: 0;
+            display: block;
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
+
+          .readme-rendered ul,
+          .readme-rendered ol {
+            padding-left: 1.25rem;
+          }
+
+          .readme-rendered ul {
+            list-style: disc;
+          }
+
+          .readme-rendered ol {
+            list-style: decimal;
+          }
+
+          .readme-rendered li {
+            margin-bottom: 0.25rem;
+          }
+
+          .readme-rendered img {
+            max-width: 100%;
+            max-height: 8rem;
+            object-fit: contain;
+            border-radius: 0.5rem;
+            margin: 0.5rem 0;
+          }
+
+          .readme-rendered table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.7rem;
+          }
+
+          .readme-rendered th,
+          .readme-rendered td {
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 0.35rem 0.45rem;
+            text-align: left;
+          }
+
+          .readme-rendered hr {
+            border: 0;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            margin: 0.75rem 0;
+          }
+
+          .readme-rendered blockquote {
+            border-left: 3px solid rgba(168, 85, 247, 0.6);
+            padding-left: 0.75rem;
+            color: #cbd5e1;
+          }
+        `}
+      </style>
     </div>
   );
 };

@@ -10,12 +10,22 @@ const TRANSLATE_TTL = 1000 * 60 * 60 * 6; // 6시간
 const memoryCache = new Map();
 const inflightRequests = new Map();
 
-const getHeaders = () => {
+const now = () => Date.now();
+const buildCacheKey = (key) => `${CACHE_PREFIX}${key}`;
+
+const getHeaders = ({
+  accept = "application/vnd.github+json",
+  contentType,
+} = {}) => {
   const token = getGithubToken();
 
   const headers = {
-    Accept: "application/vnd.github.v3+json",
+    Accept: accept,
   };
+
+  if (contentType) {
+    headers["Content-Type"] = contentType;
+  }
 
   if (token) {
     headers.Authorization = `token ${token}`;
@@ -23,10 +33,6 @@ const getHeaders = () => {
 
   return headers;
 };
-
-const now = () => Date.now();
-
-const buildCacheKey = (key) => `${CACHE_PREFIX}${key}`;
 
 const getCachedValue = (key) => {
   const fullKey = buildCacheKey(key);
@@ -94,6 +100,25 @@ const cachedRequest = async (key, fetcher, ttl = DEFAULT_TTL) => {
 
   inflightRequests.set(fullKey, promise);
   return promise;
+};
+
+const getReadmeCandidatePaths = () => [
+  "README.md",
+  "readme.md",
+  "README.MD",
+  "Readme.md",
+];
+
+const getReadmeCandidateBranches = (defaultBranch = "main") => {
+  return [...new Set([defaultBranch, "main", "master"].filter(Boolean))];
+};
+
+const fetchText = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    return null;
+  }
+  return response.text();
 };
 
 export const clearGithubApiCache = () => {
@@ -237,44 +262,71 @@ export const searchRepos = async (keyword) => {
 };
 
 const cleanReadmeText = (text) => {
-  let noHtmlText = text
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/!\[.*?\]\(.*?\)/g, "")
-    .replace(/<picture>[\s\S]*?<\/picture>/gi, "")
-    .replace(/<\/?(p|div|a|span|h[1-6]|br|hr|source|img|svg|path)[^>]*>/gi, "");
+  if (!text) return "";
 
-  let lines = noHtmlText.split("\n").slice(0, 8).join("\n");
-  const codeBlockCount = (lines.match(/```/g) || []).length;
+  let cleaned = text
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<picture[\s\S]*?<\/picture>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/!\[.*?\]\(.*?\)/g, "")
+    .replace(/<img[^>]*>/gi, "")
+    .replace(/\[([^\]]+)\]\((.*?)\)/g, "$1")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/^\s*[-|:]{3,}\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const lines = cleaned
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(
+      (line) =>
+        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(
+          line,
+        ),
+    )
+    .slice(0, 8);
+
+  let result = lines.join("\n");
+  const codeBlockCount = (result.match(/```/g) || []).length;
 
   if (codeBlockCount % 2 !== 0) {
-    lines += "\n```";
+    result += "\n```";
   }
 
-  return lines.trim();
+  return result.trim();
 };
 
-export const getReadmeSummary = async (owner, repo, defaultBranch = "main") => {
-  const candidateBranches = [defaultBranch, "main", "master"].filter(Boolean);
-  const uniqueBranches = [...new Set(candidateBranches)];
+export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
+  const branches = getReadmeCandidateBranches(defaultBranch);
+  const paths = getReadmeCandidatePaths();
 
   return cachedRequest(
-    `readme-summary:${owner}/${repo}:${uniqueBranches.join(",")}`,
+    `readme-raw:${owner}/${repo}:${branches.join(",")}:${paths.join(",")}`,
     async () => {
-      for (const branch of uniqueBranches) {
-        const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`;
+      for (const branch of branches) {
+        for (const path of paths) {
+          const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
 
-        try {
-          const response = await fetch(url, { headers: getHeaders() });
-          if (!response.ok) continue;
+          try {
+            const text = await fetchText(url, {
+              headers: getHeaders({ accept: "text/plain" }),
+            });
 
-          const text = await response.text();
-          const cleaned = cleanReadmeText(text);
-
-          if (cleaned) {
-            return cleaned;
+            if (text) {
+              return text;
+            }
+          } catch (error) {
+            console.error("README 원문 로드 에러:", error);
           }
-        } catch (error) {
-          console.error("README 로드 에러:", error);
         }
       }
 
@@ -284,47 +336,88 @@ export const getReadmeSummary = async (owner, repo, defaultBranch = "main") => {
   );
 };
 
-export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
-  const candidateBranches = [defaultBranch, "main", "master"].filter(Boolean);
-  const uniqueBranches = [...new Set(candidateBranches)];
-
+export const getReadmeSummary = async (owner, repo, defaultBranch = "main") => {
   return cachedRequest(
-    `readme-image:${owner}/${repo}:${uniqueBranches.join(",")}`,
+    `readme-summary:${owner}/${repo}:${defaultBranch}`,
     async () => {
-      for (const branch of uniqueBranches) {
-        const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/README.md`;
+      const text = await getReadmeRaw(owner, repo, defaultBranch);
+      return cleanReadmeText(text);
+    },
+    README_TTL,
+  );
+};
 
-        try {
-          const response = await fetch(url, { headers: getHeaders() });
-          if (!response.ok) continue;
+export const getRenderedReadmeHtml = async (
+  owner,
+  repo,
+  defaultBranch = "main",
+) => {
+  return cachedRequest(
+    `readme-rendered-html:${owner}/${repo}:${defaultBranch}`,
+    async () => {
+      const markdown = await getReadmeRaw(owner, repo, defaultBranch);
 
-          const text = await response.text();
-
-          const markdownImgRegex =
-            /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
-          const htmlImgRegex =
-            /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)["']/i;
-
-          const mdMatch = text.match(markdownImgRegex);
-          const htmlMatch = text.match(htmlImgRegex);
-
-          let imageUrl = mdMatch ? mdMatch[1] : htmlMatch ? htmlMatch[1] : null;
-
-          if (imageUrl && !imageUrl.startsWith("http")) {
-            imageUrl = imageUrl.startsWith("/")
-              ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}${imageUrl}`
-              : `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${imageUrl}`;
-          }
-
-          if (imageUrl) {
-            return imageUrl;
-          }
-        } catch (error) {
-          console.error("README 이미지 파싱 에러:", error);
-        }
+      if (!markdown) {
+        return "";
       }
 
-      return null;
+      try {
+        const response = await fetch("https://api.github.com/markdown", {
+          method: "POST",
+          headers: getHeaders({
+            accept: "text/html",
+            contentType: "application/json",
+          }),
+          body: JSON.stringify({
+            text: markdown,
+            mode: "gfm",
+            context: `${owner}/${repo}`,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "");
+          console.error("README HTML 렌더링 실패:", response.status, errorText);
+          return "";
+        }
+
+        return response.text();
+      } catch (error) {
+        console.error("README HTML 렌더링 에러:", error);
+        return "";
+      }
+    },
+    README_TTL,
+  );
+};
+
+export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
+  const candidateBranches = getReadmeCandidateBranches(defaultBranch);
+
+  return cachedRequest(
+    `readme-image:${owner}/${repo}:${candidateBranches.join(",")}`,
+    async () => {
+      const text = await getReadmeRaw(owner, repo, defaultBranch);
+      if (!text) return null;
+
+      const markdownImgRegex =
+        /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
+      const htmlImgRegex =
+        /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)["']/i;
+
+      const mdMatch = text.match(markdownImgRegex);
+      const htmlMatch = text.match(htmlImgRegex);
+
+      let imageUrl = mdMatch ? mdMatch[1] : htmlMatch ? htmlMatch[1] : null;
+
+      if (imageUrl && !imageUrl.startsWith("http")) {
+        const branch = candidateBranches[0] || "main";
+        imageUrl = imageUrl.startsWith("/")
+          ? `https://raw.githubusercontent.com/${owner}/${repo}/${branch}${imageUrl}`
+          : `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${imageUrl}`;
+      }
+
+      return imageUrl || null;
     },
     README_TTL,
   );
