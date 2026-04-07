@@ -1,3 +1,4 @@
+// src/components/Card/ChortCard.js
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import {
@@ -56,9 +57,9 @@ const sanitizeRenderedHtml = (html) => {
       "link",
     ];
 
-    doc.querySelectorAll(blockedSelectors.join(",")).forEach((node) => {
-      node.remove();
-    });
+    doc
+      .querySelectorAll(blockedSelectors.join(","))
+      .forEach((node) => node.remove());
 
     doc.querySelectorAll("*").forEach((node) => {
       [...node.attributes].forEach((attr) => {
@@ -69,7 +70,6 @@ const sanitizeRenderedHtml = (html) => {
           node.removeAttribute(attr.name);
           return;
         }
-
         if (
           (name === "href" || name === "src") &&
           /^\s*javascript:/i.test(value)
@@ -77,7 +77,6 @@ const sanitizeRenderedHtml = (html) => {
           node.removeAttribute(attr.name);
           return;
         }
-
         if (name === "style") {
           node.removeAttribute(attr.name);
           return;
@@ -88,7 +87,6 @@ const sanitizeRenderedHtml = (html) => {
         node.setAttribute("target", "_blank");
         node.setAttribute("rel", "noreferrer noopener");
       }
-
       if (node.tagName === "IMG") {
         node.setAttribute("loading", "lazy");
         node.setAttribute("referrerpolicy", "no-referrer");
@@ -136,30 +134,32 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     onCommentsCountChangeRef.current = onCommentsCountChange;
   }, [onCommentsCountChange]);
 
+  // repo 교체 시 상태 리셋
   useEffect(() => {
     const latestCache = getInitialCacheEntry(repo);
-
     setReadmeImage(latestCache.readmeImage || null);
     setKoDescription(latestCache.koDescription || "번역 중...");
     setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
     setFallbackReadmeText(latestCache.fallbackReadmeText || "");
     setIsKorean(true);
-
     lightLoadedRef.current = latestCache.lightLoaded || false;
     heavyLoadedRef.current = latestCache.heavyLoaded || false;
     lightLoadingRef.current = false;
     heavyLoadingRef.current = false;
     viewStartTime.current = null;
     hasRecordedSignal.current = false;
-  }, [repoKey, repo]);
+  }, [repoKey]);
 
+  // [성능개선] useEffect 의존성에서 repo 객체 제거 → repoKey(string)만 사용
+  // 이전: [repo, repoKey, onVisible] — repo 객체는 매 렌더마다 새 참조 생성
+  //       → 피드에 새 배치 추가될 때마다 모든 카드의 옵저버가 재생성됨
+  // 이후: [repoKey, onVisible] — 실제 레포가 바뀔 때만 재실행
   useEffect(() => {
     let cancelled = false;
 
     const loadLightData = async () => {
       if (lightLoadedRef.current || lightLoadingRef.current) return;
       lightLoadingRef.current = true;
-
       try {
         const latestCache = getInitialCacheEntry(repo);
 
@@ -177,20 +177,16 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         setKoDescription(nextKoDescription || "설명이 없습니다.");
         onCommentsCountChangeRef.current?.(repo.id, nextCommentCount || 0);
-
         setRepoCacheEntry(repo, {
           koDescription: nextKoDescription || "설명이 없습니다.",
           commentCount: nextCommentCount || 0,
           lightLoaded: true,
         });
-
         lightLoadedRef.current = true;
       } catch (error) {
         console.error("카드 기본 데이터 로드 에러:", error);
-
-        if (!cancelled) {
+        if (!cancelled)
           setKoDescription(repo.description || "설명이 없습니다.");
-        }
       } finally {
         lightLoadingRef.current = false;
       }
@@ -199,13 +195,11 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     const loadHeavyData = async () => {
       if (heavyLoadedRef.current || heavyLoadingRef.current) return;
       heavyLoadingRef.current = true;
-
       try {
         const latestCache = getInitialCacheEntry(repo);
 
         if (latestCache.heavyLoaded) {
           if (cancelled) return;
-
           setReadmeImage(latestCache.readmeImage || null);
           setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
           setFallbackReadmeText(
@@ -234,31 +228,26 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         setReadmeImage(imageUrl || null);
         setRenderedReadmeHtml(safeHtml);
         setFallbackReadmeText(safeFallback);
-
         setRepoCacheEntry(repo, {
           readmeImage: imageUrl || null,
           renderedReadmeHtml: safeHtml,
           fallbackReadmeText: safeFallback,
           heavyLoaded: true,
         });
-
         heavyLoadedRef.current = true;
       } catch (error) {
         console.error("카드 상세 데이터 로드 에러:", error);
-
         if (!cancelled) {
           setReadmeImage(null);
           setRenderedReadmeHtml("");
           setFallbackReadmeText("README 데이터를 찾을 수 없습니다.");
         }
-
         setRepoCacheEntry(repo, {
           readmeImage: null,
           renderedReadmeHtml: "",
           fallbackReadmeText: "README 데이터를 찾을 수 없습니다.",
           heavyLoaded: true,
         });
-
         heavyLoadedRef.current = true;
       } finally {
         heavyLoadingRef.current = false;
@@ -272,7 +261,6 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         if (entry.isIntersecting) {
           loadLightData();
           loadHeavyData();
-
           if (!viewStartTime.current) {
             viewStartTime.current = Date.now();
             hasRecordedSignal.current = false;
@@ -280,13 +268,11 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         } else if (viewStartTime.current && !hasRecordedSignal.current) {
           hasRecordedSignal.current = true;
           const dwellMs = Date.now() - viewStartTime.current;
-
           if (dwellMs < 800) {
             recordSkip(repo);
           } else {
             recordView(repo, dwellMs);
           }
-
           viewStartTime.current = null;
         }
 
@@ -297,15 +283,13 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
       { threshold: [0.1, 0.6] },
     );
 
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
-    }
+    if (cardRef.current) observer.observe(cardRef.current);
 
     return () => {
       cancelled = true;
       observer.disconnect();
     };
-  }, [repo, repoKey, onVisible]);
+  }, [repoKey, onVisible]); // [성능개선] repo 객체 제거
 
   const displayDescription = isKorean
     ? koDescription
@@ -344,7 +328,6 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                 @{repo.owner.login}
               </span>
             </div>
-
             <h1 className="text-2xl font-black text-white leading-tight break-words">
               {repo.name}
             </h1>
@@ -443,127 +426,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           </div>
         </div>
       </div>
-
-      <style>
-        {`
-          .readme-rendered {
-            max-height: 100%;
-            overflow: hidden;
-          }
-
-          .readme-rendered h1,
-          .readme-rendered h2,
-          .readme-rendered h3,
-          .readme-rendered h4,
-          .readme-rendered h5,
-          .readme-rendered h6 {
-            color: white;
-            font-weight: 700;
-            margin-top: 0.5rem;
-            margin-bottom: 0.5rem;
-            line-height: 1.3;
-          }
-
-          .readme-rendered h1 { font-size: 1rem; }
-          .readme-rendered h2 { font-size: 0.95rem; }
-          .readme-rendered h3 { font-size: 0.9rem; }
-
-          .readme-rendered p,
-          .readme-rendered ul,
-          .readme-rendered ol,
-          .readme-rendered blockquote,
-          .readme-rendered table,
-          .readme-rendered pre {
-            margin-bottom: 0.6rem;
-          }
-
-          .readme-rendered a {
-            color: #93c5fd;
-            text-decoration: none;
-          }
-
-          .readme-rendered a:hover {
-            text-decoration: underline;
-          }
-
-          .readme-rendered code {
-            background: rgba(255, 255, 255, 0.08);
-            color: #fda4af;
-            padding: 0.1rem 0.3rem;
-            border-radius: 0.35rem;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            font-size: 0.72rem;
-          }
-
-          .readme-rendered pre {
-            background: #161b22;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 0.75rem;
-            padding: 0.75rem;
-            overflow: hidden;
-          }
-
-          .readme-rendered pre code {
-            background: transparent;
-            color: #86efac;
-            padding: 0;
-            border-radius: 0;
-            display: block;
-            white-space: pre-wrap;
-            word-break: break-word;
-          }
-
-          .readme-rendered ul,
-          .readme-rendered ol {
-            padding-left: 1.25rem;
-          }
-
-          .readme-rendered ul {
-            list-style: disc;
-          }
-
-          .readme-rendered ol {
-            list-style: decimal;
-          }
-
-          .readme-rendered li {
-            margin-bottom: 0.25rem;
-          }
-
-          .readme-rendered img {
-            max-width: 100%;
-            max-height: 8rem;
-            object-fit: contain;
-            border-radius: 0.5rem;
-            margin: 0.5rem 0;
-          }
-
-          .readme-rendered table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.7rem;
-          }
-
-          .readme-rendered th,
-          .readme-rendered td {
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            padding: 0.35rem 0.45rem;
-            text-align: left;
-          }
-
-          .readme-rendered hr {
-            border: 0;
-            border-top: 1px solid rgba(255, 255, 255, 0.08);
-            margin: 0.75rem 0;
-          }
-
-          .readme-rendered blockquote {
-            border-left: 3px solid rgba(168, 85, 247, 0.6);
-            padding-left: 0.75rem;
-            color: #cbd5e1;
-          }
-        `}
-      </style>
+      {/* [구조개선] inline <style> 제거 → index.css로 이동 */}
     </div>
   );
 };

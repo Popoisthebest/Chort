@@ -2,10 +2,10 @@
 import { getGithubToken } from "./firebase";
 
 const CACHE_PREFIX = "chort_cache:";
-const DEFAULT_TTL = 1000 * 60 * 10; // 10분
-const SEARCH_TTL = 1000 * 60 * 5; // 5분
-const README_TTL = 1000 * 60 * 30; // 30분
-const TRANSLATE_TTL = 1000 * 60 * 60 * 6; // 6시간
+const DEFAULT_TTL = 1000 * 60 * 10;
+const SEARCH_TTL = 1000 * 60 * 5;
+const README_TTL = 1000 * 60 * 30;
+const TRANSLATE_TTL = 1000 * 60 * 60 * 6;
 
 const memoryCache = new Map();
 const inflightRequests = new Map();
@@ -18,19 +18,9 @@ const getHeaders = ({
   contentType,
 } = {}) => {
   const token = getGithubToken();
-
-  const headers = {
-    Accept: accept,
-  };
-
-  if (contentType) {
-    headers["Content-Type"] = contentType;
-  }
-
-  if (token) {
-    headers.Authorization = `token ${token}`;
-  }
-
+  const headers = { Accept: accept };
+  if (contentType) headers["Content-Type"] = contentType;
+  if (token) headers.Authorization = `token ${token}`;
   return headers;
 };
 
@@ -61,10 +51,7 @@ const getCachedValue = (key) => {
 
 const setCachedValue = (key, value, ttl = DEFAULT_TTL) => {
   const fullKey = buildCacheKey(key);
-  const payload = {
-    value,
-    expiresAt: now() + ttl,
-  };
+  const payload = { value, expiresAt: now() + ttl };
 
   memoryCache.set(fullKey, payload);
 
@@ -79,9 +66,7 @@ const setCachedValue = (key, value, ttl = DEFAULT_TTL) => {
 
 const cachedRequest = async (key, fetcher, ttl = DEFAULT_TTL) => {
   const cached = getCachedValue(key);
-  if (cached !== null) {
-    return cached;
-  }
+  if (cached !== null) return cached;
 
   const fullKey = buildCacheKey(key);
 
@@ -115,9 +100,7 @@ const getReadmeCandidateBranches = (defaultBranch = "main") => {
 
 const fetchText = async (url, options = {}) => {
   const response = await fetch(url, options);
-  if (!response.ok) {
-    return null;
-  }
+  if (!response.ok) return null;
   return response.text();
 };
 
@@ -154,38 +137,25 @@ const shouldSkipTranslationNode = (node) => {
     "OPTION",
   ]);
 
-  if (skipTags.has(parent.tagName)) {
-    return true;
-  }
-
-  if (parent.closest("code, pre, script, style, svg")) {
-    return true;
-  }
+  if (skipTags.has(parent.tagName)) return true;
+  if (parent.closest("code, pre, script, style, svg")) return true;
 
   return false;
 };
 
 const isTranslatableText = (text) => {
   const normalized = normalizeWhitespace(text);
-  if (!normalized) return false;
+  if (!normalized || normalized.length < 2) return false;
 
-  if (normalized.length < 2) return false;
-
-  // 코드/기호 위주 문자열 제외
   const letters =
     normalized.match(/[A-Za-z\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]/g) || [];
-  if (letters.length === 0) return false;
-
-  return true;
+  return letters.length > 0;
 };
 
 const chunkText = (text, maxLength = 800) => {
   const normalized = normalizeWhitespace(text);
   if (!normalized) return [];
-
-  if (normalized.length <= maxLength) {
-    return [normalized];
-  }
+  if (normalized.length <= maxLength) return [normalized];
 
   const sentences = normalized.split(/(?<=[.!?。！？])\s+|\n+/);
   const chunks = [];
@@ -208,38 +178,14 @@ const chunkText = (text, maxLength = 800) => {
     }
   }
 
-  if (current) {
-    chunks.push(current);
-  }
-
+  if (current) chunks.push(current);
   return chunks;
 };
 
-export const clearGithubApiCache = () => {
-  const keysToDelete = [];
-
-  for (const key of memoryCache.keys()) {
-    if (key.startsWith(CACHE_PREFIX)) {
-      keysToDelete.push(key);
-    }
-  }
-
-  keysToDelete.forEach((key) => memoryCache.delete(key));
-
-  try {
-    Object.keys(sessionStorage).forEach((key) => {
-      if (key.startsWith(CACHE_PREFIX)) {
-        sessionStorage.removeItem(key);
-      }
-    });
-  } catch {
-    // ignore
-  }
-};
-
+// [성능개선] star/unstar 시 불필요한 전체 캐시 무효화 제거
+// trending/search/readme 캐시는 star 여부와 무관하므로 삭제할 이유 없음
 export const starRepo = async (owner, repo) => {
   const token = getGithubToken();
-
   if (!token) {
     console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
@@ -248,16 +194,10 @@ export const starRepo = async (owner, repo) => {
   try {
     const response = await fetch(
       `https://api.github.com/user/starred/${owner}/${repo}`,
-      {
-        method: "PUT",
-        headers: getHeaders(),
-      },
+      { method: "PUT", headers: getHeaders() },
     );
 
-    if (response.status === 204 || response.ok) {
-      clearGithubApiCache();
-      return true;
-    }
+    if (response.status === 204 || response.ok) return true;
 
     const data = await response.json().catch(() => ({}));
     console.error(`❌ Star 실패: ${response.status}`, data);
@@ -270,7 +210,6 @@ export const starRepo = async (owner, repo) => {
 
 export const unstarRepo = async (owner, repo) => {
   const token = getGithubToken();
-
   if (!token) {
     console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
@@ -279,16 +218,10 @@ export const unstarRepo = async (owner, repo) => {
   try {
     const response = await fetch(
       `https://api.github.com/user/starred/${owner}/${repo}`,
-      {
-        method: "DELETE",
-        headers: getHeaders(),
-      },
+      { method: "DELETE", headers: getHeaders() },
     );
 
-    if (response.status === 204 || response.ok) {
-      clearGithubApiCache();
-      return true;
-    }
+    if (response.status === 204 || response.ok) return true;
 
     const data = await response.json().catch(() => ({}));
     console.error(`❌ Unstar 실패: ${response.status}`, data);
@@ -303,8 +236,8 @@ export const getTrendingRepos = async (page = 1) => {
   const date = new Date();
   date.setDate(date.getDate() - 7);
   const formattedDate = date.toISOString().split("T")[0];
-  const query = `created:>${formattedDate}`;
-  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=stars&order=desc&per_page=10&page=${page}`;
+  const q = `created:>${formattedDate}`;
+  const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=10&page=${page}`;
 
   return cachedRequest(
     `trending:${page}:${formattedDate}`,
@@ -326,10 +259,7 @@ export const getTrendingRepos = async (page = 1) => {
 };
 
 export const getTrendingReposBatch = async (pages = [1, 2, 3]) => {
-  const results = await Promise.all(
-    pages.map((page) => getTrendingRepos(page)),
-  );
-  return results;
+  return Promise.all(pages.map((page) => getTrendingRepos(page)));
 };
 
 export const searchRepos = async (keyword) => {
@@ -385,10 +315,7 @@ const cleanReadmeText = (text) => {
 
   let result = lines.join("\n");
   const codeBlockCount = (result.match(/```/g) || []).length;
-
-  if (codeBlockCount % 2 !== 0) {
-    result += "\n```";
-  }
+  if (codeBlockCount % 2 !== 0) result += "\n```";
 
   return result.trim();
 };
@@ -403,21 +330,16 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
       for (const branch of branches) {
         for (const path of paths) {
           const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
-
           try {
             const text = await fetchText(url, {
               headers: getHeaders({ accept: "text/plain" }),
             });
-
-            if (text) {
-              return text;
-            }
+            if (text) return text;
           } catch (error) {
             console.error("README 원문 로드 에러:", error);
           }
         }
       }
-
       return "";
     },
     README_TTL,
@@ -444,10 +366,7 @@ export const getRenderedReadmeHtml = async (
     `readme-rendered-html:${owner}/${repo}:${defaultBranch}`,
     async () => {
       const markdown = await getReadmeRaw(owner, repo, defaultBranch);
-
-      if (!markdown) {
-        return "";
-      }
+      if (!markdown) return "";
 
       try {
         const response = await fetch("https://api.github.com/markdown", {
@@ -512,6 +431,8 @@ export const translateToKorean = async (text) => {
   return translated.join("\n\n").trim();
 };
 
+// [성능개선] 번역 API 호출을 직렬 → Promise.all 병렬 처리
+// cachedRequest의 inflightRequests가 중복 요청을 막으므로 안전
 export const getTranslatedRenderedReadmeHtml = async (
   owner,
   repo,
@@ -526,8 +447,11 @@ export const getTranslatedRenderedReadmeHtml = async (
 
       try {
         const parser = new DOMParser();
-        const doc = parser.parseFromString(html, "text/html");
-        const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+        const domDoc = parser.parseFromString(html, "text/html");
+        const walker = domDoc.createTreeWalker(
+          domDoc.body,
+          NodeFilter.SHOW_TEXT,
+        );
 
         const textNodes = [];
         let currentNode = walker.nextNode();
@@ -551,12 +475,14 @@ export const getTranslatedRenderedReadmeHtml = async (
           ),
         ];
 
-        const translationMap = new Map();
-
-        for (const originalText of uniqueTexts) {
-          const translated = await getTranslatedText(originalText, target);
-          translationMap.set(originalText, translated || originalText);
-        }
+        // [성능개선] 직렬 for-await → Promise.all 병렬 처리
+        const pairs = await Promise.all(
+          uniqueTexts.map(async (originalText) => {
+            const translated = await getTranslatedText(originalText, target);
+            return [originalText, translated || originalText];
+          }),
+        );
+        const translationMap = new Map(pairs);
 
         textNodes.forEach((node) => {
           const originalText = normalizeWhitespace(node.nodeValue);
@@ -575,7 +501,7 @@ export const getTranslatedRenderedReadmeHtml = async (
           }
         });
 
-        return doc.body.innerHTML || "";
+        return domDoc.body.innerHTML || "";
       } catch (error) {
         console.error("README HTML 번역 에러:", error);
         return "";
@@ -615,45 +541,4 @@ export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
     },
     README_TTL,
   );
-};
-
-const MAX_SEEN_HISTORY = 300;
-
-export const filterAndRecordSeenRepos = (newRepos) => {
-  if (!newRepos || newRepos.length === 0) return [];
-
-  const seenIds = JSON.parse(localStorage.getItem("chort_seen_history")) || [];
-  const freshRepos = newRepos.filter((repo) => !seenIds.includes(repo.id));
-  const freshIds = freshRepos.map((repo) => repo.id);
-
-  const updatedSeenIds = [...freshIds, ...seenIds].slice(0, MAX_SEEN_HISTORY);
-  localStorage.setItem("chort_seen_history", JSON.stringify(updatedSeenIds));
-
-  return freshRepos;
-};
-
-export const fetchTrendingRepos = async (page = 1) => {
-  try {
-    const response = await fetch(
-      `https://api.github.com/search/repositories?q=created:>2024-01-01&sort=stars&order=desc&page=${page}&per_page=30`,
-      { headers: getHeaders() },
-    );
-    const data = await response.json();
-
-    if (data.message && data.message.includes("API rate limit")) {
-      console.warn("GitHub API 호출 한도 초과!");
-      return [];
-    }
-
-    const freshData = filterAndRecordSeenRepos(data.items);
-
-    if (freshData.length === 0 && data.items && data.items.length > 0) {
-      return fetchTrendingRepos(page + 1);
-    }
-
-    return freshData;
-  } catch (error) {
-    console.error("데이터 패칭 에러:", error);
-    return [];
-  }
 };

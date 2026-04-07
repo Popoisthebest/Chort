@@ -19,6 +19,8 @@ import {
   serverTimestamp,
   runTransaction,
 } from "firebase/firestore";
+// [구조개선] 중복 normalizeDate 제거 → formatters.js의 safeToDate로 통일
+import { safeToDate } from "../utils/formatters";
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -56,25 +58,6 @@ const pickFirstNonEmpty = (...values) => {
     if (text) return text;
   }
   return "";
-};
-
-const normalizeDate = (value) => {
-  if (!value) return null;
-
-  if (typeof value?.toDate === "function") {
-    try {
-      return value.toDate();
-    } catch {
-      return null;
-    }
-  }
-
-  if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
 const sortByCreatedAtDesc = (a, b) => {
@@ -295,7 +278,6 @@ export const logoutUser = async () => {
     await signOut(auth);
     sessionStorage.removeItem(GITHUB_TOKEN_KEY);
     sessionStorage.removeItem(GITHUB_PROFILE_KEY);
-    console.log("✅ 로그아웃 성공");
   } catch (error) {
     console.error("로그아웃 에러:", error);
   }
@@ -314,7 +296,6 @@ export const getComments = async (repoId) => {
     const comments = querySnapshot.docs
       .map((snapshot) => {
         const data = snapshot.data();
-
         return {
           id: snapshot.id,
           repoId: data.repoId,
@@ -322,7 +303,8 @@ export const getComments = async (repoId) => {
           userId: data.userId || "",
           displayName: data.displayName || "익명",
           photoURL: data.photoURL || "",
-          createdAt: normalizeDate(data.createdAt),
+          // [구조개선] normalizeDate → safeToDate
+          createdAt: safeToDate(data.createdAt),
           replyCount: Number.isFinite(data.replyCount) ? data.replyCount : 0,
         };
       })
@@ -405,6 +387,8 @@ export const deleteComment = async (commentId) => {
   }
 };
 
+// [버그수정] addReply: addDoc + runTransaction 분리 → 단일 트랜잭션으로 통합
+// 이전 구조는 addDoc 성공 후 트랜잭션 실패 시 고아(orphan) 답글 문서가 남았음
 export const addReply = async (commentId, text, user) => {
   if (!user || !text.trim()) {
     console.error("사용자 정보 또는 답글 내용이 없습니다.");
@@ -413,41 +397,36 @@ export const addReply = async (commentId, text, user) => {
 
   try {
     const commentRef = doc(db, "comments", commentId);
-    const commentSnap = await getDoc(commentRef);
-
-    if (!commentSnap.exists()) {
-      throw new Error("원본 댓글이 존재하지 않습니다.");
-    }
-
-    const repoId = commentSnap.data()?.repoId || null;
-    const repliesRef = collection(db, "comments", commentId, "replies");
     const identity = resolveGithubIdentity(user);
 
-    const replyDoc = await addDoc(repliesRef, {
-      userId: user.uid,
-      displayName: identity.displayName,
-      photoURL: identity.photoURL,
-      text: text.trim(),
-      createdAt: serverTimestamp(),
-    });
+    const replyId = await runTransaction(db, async (transaction) => {
+      const commentSnap = await transaction.get(commentRef);
 
-    await runTransaction(db, async (transaction) => {
-      const freshCommentSnap = await transaction.get(commentRef);
-      if (!freshCommentSnap.exists()) {
+      if (!commentSnap.exists()) {
         throw new Error("원본 댓글이 존재하지 않습니다.");
       }
 
-      const current = freshCommentSnap.data()?.replyCount || 0;
-      transaction.update(commentRef, {
-        replyCount: current + 1,
+      const replyRef = doc(collection(db, "comments", commentId, "replies"));
+      transaction.set(replyRef, {
+        userId: user.uid,
+        displayName: identity.displayName,
+        photoURL: identity.photoURL,
+        text: text.trim(),
+        createdAt: serverTimestamp(),
       });
+
+      const current = commentSnap.data()?.replyCount || 0;
+      transaction.update(commentRef, { replyCount: current + 1 });
+
+      return replyRef.id;
     });
 
+    const repoId = (await getDoc(commentRef)).data()?.repoId || null;
     if (repoId) {
       invalidateCommentCountCache(repoId);
     }
 
-    return { id: replyDoc.id };
+    return { id: replyId };
   } catch (error) {
     console.error("답글 저장 에러:", error);
     return null;
@@ -463,14 +442,14 @@ export const getReplies = async (commentId) => {
     return querySnapshot.docs
       .map((snapshot) => {
         const data = snapshot.data();
-
         return {
           id: snapshot.id,
           userId: data.userId || "",
           displayName: data.displayName || "익명",
           photoURL: data.photoURL || "",
           text: data.text || "",
-          createdAt: normalizeDate(data.createdAt),
+          // [구조개선] normalizeDate → safeToDate
+          createdAt: safeToDate(data.createdAt),
         };
       })
       .sort(sortByCreatedAtAsc);
@@ -480,25 +459,30 @@ export const getReplies = async (commentId) => {
   }
 };
 
+// [버그수정] deleteReply: deleteDoc 후 트랜잭션 실패 시 카운트 불일치 → 단일 트랜잭션으로 통합
 export const deleteReply = async (commentId, replyId) => {
   try {
     const commentRef = doc(db, "comments", commentId);
-    const commentSnap = await getDoc(commentRef);
-    const repoId = commentSnap.exists() ? commentSnap.data()?.repoId : null;
-
     const replyRef = doc(db, "comments", commentId, "replies", replyId);
-    await deleteDoc(replyRef);
 
-    await runTransaction(db, async (transaction) => {
-      const freshCommentSnap = await transaction.get(commentRef);
-      if (!freshCommentSnap.exists()) {
-        return;
+    const repoId = await runTransaction(db, async (transaction) => {
+      const [commentSnap] = await Promise.all([
+        transaction.get(commentRef),
+        transaction.get(replyRef),
+      ]);
+
+      if (!commentSnap.exists()) {
+        throw new Error("원본 댓글이 존재하지 않습니다.");
       }
 
-      const current = freshCommentSnap.data()?.replyCount || 0;
+      transaction.delete(replyRef);
+
+      const current = commentSnap.data()?.replyCount || 0;
       transaction.update(commentRef, {
         replyCount: Math.max(0, current - 1),
       });
+
+      return commentSnap.data()?.repoId || null;
     });
 
     if (repoId) {

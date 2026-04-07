@@ -15,7 +15,6 @@ export const useFeed = () => {
 
   const fetchMore = useCallback(async () => {
     if (isFetchingRef.current) return;
-
     isFetchingRef.current = true;
     setLoading(true);
     setError(null);
@@ -25,12 +24,10 @@ export const useFeed = () => {
         { length: PAGES_PER_BATCH },
         (_, i) => pageRef.current + i,
       );
-
       const results = await getTrendingReposBatch(pageNumbers);
       pageRef.current += PAGES_PER_BATCH;
 
       const validResults = results.filter((r) => Array.isArray(r) && !r?.error);
-
       if (validResults.length === 0) {
         setError(
           "GitHub API 호출 한도를 초과했습니다. 잠시 후 다시 시도해주세요.",
@@ -38,13 +35,10 @@ export const useFeed = () => {
         return;
       }
 
-      const allNewRepos = validResults.flat();
-      const ranked = rankRepos(allNewRepos);
-
+      const ranked = rankRepos(validResults.flat());
       setRepos((prev) => {
         const existingIds = new Set(prev.map((r) => r.id));
-        const deduplicated = ranked.filter((r) => !existingIds.has(r.id));
-        return [...prev, ...deduplicated];
+        return [...prev, ...ranked.filter((r) => !existingIds.has(r.id))];
       });
     } catch (err) {
       console.error("피드 로드 실패:", err);
@@ -55,21 +49,17 @@ export const useFeed = () => {
     }
   }, []);
 
+  // [버그수정] resetFeed: 초기화 후 fetchMore 자동 실행
   const resetFeed = useCallback(() => {
     pageRef.current = 1;
     setRepos([]);
     setError(null);
-  }, []);
+    fetchMore();
+  }, [fetchMore]);
 
   useEffect(() => {
     fetchMore();
   }, [fetchMore]);
 
-  return {
-    repos,
-    loading,
-    error,
-    fetchMore,
-    resetFeed,
-  };
+  return { repos, loading, error, fetchMore, resetFeed };
 };
