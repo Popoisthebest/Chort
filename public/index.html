@@ -2,42 +2,54 @@
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/chort.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#0d1117" />
+    <meta name="robots" content="index, follow" />
+
+    <title>Chort</title>
     <meta
       name="description"
-      content="GitHub 트렌딩을 숏폼처럼 넘겨보세요 | Chort"
+      content="Chort는 매일 업데이트되는 전 세계 GitHub 인기 레포지토리를 숏폼 카드로 제공합니다. 내 취향에 맞는 오픈소스를 쉽고 빠르게 탐색하세요."
     />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/chort.png" />
-    <!--
-      manifest.json provides metadata used when your web app is installed on a
-      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-    -->
+    <meta
+      name="keywords"
+      content="GitHub, 오픈소스, 개발자, 트렌딩, 숏폼, Chort, 깃허브, 추천시스템"
+    />
+    <link rel="canonical" href="https://chort.kro.kr/" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <!--
-      Notice the use of %PUBLIC_URL% in the tags above.
-      It will be replaced with the URL of the `public` folder during the build.
-      Only files inside the `public` folder can be referenced from the HTML.
 
-      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-      work correctly both with client-side routing and a non-root public URL.
-      Learn how to configure a non-root public URL by running `npm run build`.
-    -->
-    <title>Chort</title>
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Chort" />
+    <meta property="og:locale" content="ko_KR" />
+    <meta property="og:url" content="https://chort.kro.kr/" />
+    <meta property="og:title" content="Chort - 개발자를 위한 숏폼 트렌딩" />
+    <meta
+      property="og:description"
+      content="오픈소스 탐색이 즐거워집니다. 나만을 위한 GitHub 추천 피드를 확인하세요."
+    />
+    <meta property="og:image" content="https://chort.kro.kr/og-image.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Chort - GitHub Trending Short-form" />
+    <meta
+      name="twitter:description"
+      content="Swipe through GitHub's hottest repositories."
+    />
+    <meta name="twitter:image" content="https://chort.kro.kr/og-image.png" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "Chort",
+        "url": "https://chort.kro.kr/",
+        "inLanguage": "ko-KR",
+        "description": "매일 업데이트되는 GitHub 트렌딩 레포지토리를 숏폼처럼 탐색하는 서비스"
+      }
+    </script>
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <noscript>이 앱을 실행하려면 JavaScript를 활성화해야 합니다.</noscript>
     <div id="root"></div>
-    <!--
-      This HTML file is a template.
-      If you open it directly in the browser, you will see an empty page.
-
-      You can add webfonts, meta tags, or analytics to this file.
-      The build step will place the bundled scripts into the <body> tag.
-
-      To begin the development, run `npm start` or `yarn start`.
-      To create a production bundle, use `npm run build` or `yarn build`.
-    -->
   </body>
 </html>
