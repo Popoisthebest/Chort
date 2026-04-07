@@ -116,6 +116,28 @@ const decodeBase64Utf8 = (value) => {
   }
 };
 
+const fetchGithubJsonWithPublicFallback = async (url) => {
+  const response = await fetch(url, { headers: getHeaders() });
+  if (response.ok) {
+    const data = await response.json().catch(() => null);
+    return { response, data };
+  }
+
+  if (response.status !== 401 && response.status !== 403) {
+    return { response, data: null };
+  }
+
+  // 토큰 만료/권한 이슈 시 공개 저장소는 비인증 요청으로 재시도
+  const fallbackResponse = await fetch(url, {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  const fallbackData = fallbackResponse.ok
+    ? await fallbackResponse.json().catch(() => null)
+    : null;
+
+  return { response: fallbackResponse, data: fallbackData };
+};
+
 const decodeHtmlEntities = (text) => {
   if (!text) return "";
   const textarea = document.createElement("textarea");
@@ -340,13 +362,29 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
     `readme-raw:${owner}/${repo}:${branches.join(",")}:${paths.join(",")}`,
     async () => {
       for (const branch of branches) {
+        const readmeApiUrl = `https://api.github.com/repos/${owner}/${repo}/readme?ref=${encodeURIComponent(branch)}`;
+        try {
+          const { response, data } =
+            await fetchGithubJsonWithPublicFallback(readmeApiUrl);
+          if (!response.ok || !data) continue;
+
+          if (typeof data.content === "string" && data.encoding === "base64") {
+            const decoded = decodeBase64Utf8(data.content);
+            if (decoded) return decoded;
+          }
+        } catch {
+          // readme API 실패 시 경로 탐색으로 계속 진행
+        }
+      }
+
+      for (const branch of branches) {
         for (const path of paths) {
           const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
           try {
-            const response = await fetch(url, { headers: getHeaders() });
+            const { response, data } = await fetchGithubJsonWithPublicFallback(
+              url,
+            );
             if (!response.ok) continue;
-
-            const data = await response.json().catch(() => null);
             if (!data) continue;
 
             if (typeof data.content === "string" && data.encoding === "base64") {

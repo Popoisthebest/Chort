@@ -45,6 +45,7 @@ const sanitizeRenderedHtml = (html) => {
     const blockedSelectors = [
       "script",
       "style",
+      "img",
       "iframe",
       "object",
       "embed",
@@ -86,10 +87,6 @@ const sanitizeRenderedHtml = (html) => {
       if (node.tagName === "A") {
         node.setAttribute("target", "_blank");
         node.setAttribute("rel", "noreferrer noopener");
-      }
-      if (node.tagName === "IMG") {
-        node.setAttribute("loading", "lazy");
-        node.setAttribute("referrerpolicy", "no-referrer");
       }
     });
 

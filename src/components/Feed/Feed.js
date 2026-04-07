@@ -55,6 +55,18 @@ export default function Feed() {
     return () => observer.disconnect();
   }, [fetchMore, loading]);
 
+  useEffect(() => {
+    if (!currentRepo || loading || error) return;
+
+    const currentIndex = repos.findIndex((repo) => repo.id === currentRepo.id);
+    if (currentIndex < 0) return;
+
+    const remainingRepos = repos.length - currentIndex - 1;
+    if (remainingRepos <= 3) {
+      fetchMore();
+    }
+  }, [currentRepo, repos, loading, error, fetchMore]);
+
   const handleCommentsCountChange = useCallback((repoId, count) => {
     setCommentCounts((prev) => {
       if (prev[repoId] === count) {
