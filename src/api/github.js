@@ -104,6 +104,18 @@ const fetchText = async (url, options = {}) => {
   return response.text();
 };
 
+const decodeBase64Utf8 = (value) => {
+  if (!value || typeof value !== "string") return "";
+  try {
+    const sanitized = value.replace(/\s/g, "");
+    const binary = atob(sanitized);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch {
+    return "";
+  }
+};
+
 const decodeHtmlEntities = (text) => {
   if (!text) return "";
   const textarea = document.createElement("textarea");
@@ -329,14 +341,27 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
     async () => {
       for (const branch of branches) {
         for (const path of paths) {
-          const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+          const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
           try {
-            const text = await fetchText(url, {
-              headers: getHeaders({ accept: "text/plain" }),
-            });
-            if (text) return text;
-          } catch (error) {
-            console.error("README 원문 로드 에러:", error);
+            const response = await fetch(url, { headers: getHeaders() });
+            if (!response.ok) continue;
+
+            const data = await response.json().catch(() => null);
+            if (!data) continue;
+
+            if (typeof data.content === "string" && data.encoding === "base64") {
+              const decoded = decodeBase64Utf8(data.content);
+              if (decoded) return decoded;
+            }
+
+            if (typeof data.download_url === "string" && data.download_url) {
+              const text = await fetchText(data.download_url, {
+                headers: getHeaders({ accept: "text/plain" }),
+              });
+              if (text) return text;
+            }
+          } catch {
+            // 후보 브랜치/경로 탐색 중 단건 실패는 다음 후보로 진행
           }
         }
       }
