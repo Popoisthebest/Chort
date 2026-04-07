@@ -21,7 +21,7 @@ export default function Saved() {
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
       <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20">
-        <h1 className="text-3xl font-bold">Saved 🔖</h1>
+        <h1 className="text-3xl font-bold">Saved</h1>
         <p className="text-gray-400 text-sm mt-2">
           내가 찜한 레포지토리 모아보기
         </p>

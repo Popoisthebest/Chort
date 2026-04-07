@@ -40,7 +40,7 @@ export default function Profile({ user }) {
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
       <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20 flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Profile 👤</h1>
+        <h1 className="text-3xl font-bold">Profile</h1>
         <Settings className="w-6 h-6 text-gray-400 cursor-pointer hover:text-white transition" />
       </div>
 
