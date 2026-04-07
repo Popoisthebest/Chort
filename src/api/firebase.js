@@ -67,12 +67,22 @@ export const getComments = async (repoId) => {
   try {
     const q = query(collection(db, "comments"), orderBy("createdAt", "desc"));
     const querySnapshot = await getDocs(q);
+
     const comments = querySnapshot.docs
-      .map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }))
+      .map((doc) => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          // Firestore Timestamp -> Date 변환
+          createdAt: data.createdAt?.toDate?.() || data.createdAt || null,
+          // 구버전/신버전 필드 모두 대응
+          displayName: data.displayName || data.userName || "익명",
+          photoURL: data.photoURL || data.userPhoto || "",
+        };
+      })
       .filter((comment) => comment.repoId === String(repoId));
+
     return comments;
   } catch (error) {
     console.error("댓글 조회 에러:", error);
@@ -89,11 +99,21 @@ export const addComment = async (repoId, text, user) => {
       repoId: String(repoId),
       text: text.trim(),
       userId: user.uid,
-      userName: user.displayName || "익명",
+
+      // CommentsPanel과 동일한 필드명으로 저장
+      displayName:
+        user.displayName || user.reloadUserInfo?.screenName || "익명",
+      photoURL: user.photoURL || "",
+      userEmail: user.email || "",
+
+      // 하위 호환용으로 남겨도 됨
+      userName: user.displayName || user.reloadUserInfo?.screenName || "익명",
       userPhoto: user.photoURL || "",
+
       createdAt: new Date(),
       replyCount: 0,
     });
+
     return { id: docRef.id };
   } catch (error) {
     console.error("댓글 추가 에러:", error);
@@ -123,9 +143,10 @@ export const addReply = async (commentId, text, user) => {
     const repliesRef = collection(db, "comments", commentId, "replies");
     const docRef = await addDoc(repliesRef, {
       userId: user.uid,
-      userEmail: user.email,
-      displayName: user.displayName,
-      photoURL: user.photoURL,
+      userEmail: user.email || "",
+      displayName:
+        user.displayName || user.reloadUserInfo?.screenName || "익명",
+      photoURL: user.photoURL || "",
       text: text.trim(),
       createdAt: new Date(),
     });
@@ -146,9 +167,10 @@ export const getReplies = async (commentId) => {
     const replies = querySnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate(),
+      createdAt:
+        doc.data().createdAt?.toDate?.() || doc.data().createdAt || null,
     }));
-    // 클라이언트 사이드에서 오래된 순 정렬 (답글은 시간순)
+
     replies.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     return replies;
   } catch (error) {
