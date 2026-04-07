@@ -1,6 +1,6 @@
 // src/components/Feed/Feed.js
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Star, Share2, Code, MessageCircle } from "lucide-react";
 import ChortCard from "../Card/ChortCard";
 import CommentsPanel from "../Comments/CommentsPanel";
@@ -55,12 +55,18 @@ export default function Feed() {
     return () => observer.disconnect();
   }, [fetchMore, loading]);
 
-  const handleCommentsCountChange = (repoId, count) => {
-    setCommentCounts((prev) => ({
-      ...prev,
-      [repoId]: count,
-    }));
-  };
+  const handleCommentsCountChange = useCallback((repoId, count) => {
+    setCommentCounts((prev) => {
+      if (prev[repoId] === count) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [repoId]: count,
+      };
+    });
+  }, []);
 
   const toggleStar = async (repo) => {
     if (!repo) return;

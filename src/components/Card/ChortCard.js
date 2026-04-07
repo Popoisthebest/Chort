@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import {
@@ -22,6 +22,7 @@ const getInitialCacheEntry = (repo) => {
       koReadme: "",
       readmeImage: null,
       commentCount: null,
+      lightLoaded: false,
       heavyLoaded: false,
     }
   );
@@ -34,82 +35,121 @@ const setRepoCacheEntry = (repo, patch) => {
 };
 
 const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
-  const cached = getInitialCacheEntry(repo);
+  const repoKey = repo.full_name;
+  const cacheEntry = useMemo(() => getInitialCacheEntry(repo), [repoKey]);
 
-  const [readmeImage, setReadmeImage] = useState(cached.readmeImage || null);
+  const [readmeImage, setReadmeImage] = useState(
+    cacheEntry.readmeImage || null,
+  );
   const [originalReadme, setOriginalReadme] = useState(
-    cached.originalReadme || "",
+    cacheEntry.originalReadme || "",
   );
   const [koDescription, setKoDescription] = useState(
-    cached.koDescription || "번역 중...",
+    cacheEntry.koDescription || "번역 중...",
   );
   const [koReadme, setKoReadme] = useState(
-    cached.koReadme || "README 불러오는 중...",
+    cacheEntry.heavyLoaded
+      ? cacheEntry.koReadme || "README 데이터를 찾을 수 없습니다."
+      : "README 불러오는 중...",
   );
   const [isKorean, setIsKorean] = useState(true);
 
   const cardRef = useRef(null);
-  const hasLoadedLightRef = useRef(false);
-  const hasLoadedHeavyRef = useRef(cached.heavyLoaded || false);
   const viewStartTime = useRef(null);
   const hasRecordedSignal = useRef(false);
+
+  const lightLoadedRef = useRef(cacheEntry.lightLoaded || false);
+  const heavyLoadedRef = useRef(cacheEntry.heavyLoaded || false);
+  const lightLoadingRef = useRef(false);
+  const heavyLoadingRef = useRef(false);
+  const onCommentsCountChangeRef = useRef(onCommentsCountChange);
 
   const ogImageUrl = `https://opengraph.githubassets.com/1/${repo.full_name}`;
 
   useEffect(() => {
-    let isMounted = true;
+    onCommentsCountChangeRef.current = onCommentsCountChange;
+  }, [onCommentsCountChange]);
+
+  useEffect(() => {
+    const latestCache = getInitialCacheEntry(repo);
+
+    setReadmeImage(latestCache.readmeImage || null);
+    setOriginalReadme(latestCache.originalReadme || "");
+    setKoDescription(latestCache.koDescription || "번역 중...");
+    setKoReadme(
+      latestCache.heavyLoaded
+        ? latestCache.koReadme || "README 데이터를 찾을 수 없습니다."
+        : "README 불러오는 중...",
+    );
+    setIsKorean(true);
+
+    lightLoadedRef.current = latestCache.lightLoaded || false;
+    heavyLoadedRef.current = latestCache.heavyLoaded || false;
+    lightLoadingRef.current = false;
+    heavyLoadingRef.current = false;
+    viewStartTime.current = null;
+    hasRecordedSignal.current = false;
+  }, [repoKey, repo]);
+
+  useEffect(() => {
+    let cancelled = false;
 
     const loadLightData = async () => {
-      if (hasLoadedLightRef.current) return;
-      hasLoadedLightRef.current = true;
+      if (lightLoadedRef.current || lightLoadingRef.current) return;
+      lightLoadingRef.current = true;
 
       try {
-        if (!cached.koDescription) {
-          const translatedDesc = await translateToKorean(
-            repo.description || "",
-          );
-          if (!isMounted) return;
+        const latestCache = getInitialCacheEntry(repo);
 
-          setKoDescription(translatedDesc || "설명이 없습니다.");
-          setRepoCacheEntry(repo, {
-            koDescription: translatedDesc || "설명이 없습니다.",
-          });
-        } else {
-          setKoDescription(cached.koDescription);
+        let nextKoDescription = latestCache.koDescription;
+        if (!nextKoDescription) {
+          nextKoDescription = await translateToKorean(repo.description || "");
         }
 
-        if (cached.commentCount !== null) {
-          onCommentsCountChange?.(repo.id, cached.commentCount);
-        } else {
-          const totalCount = await getCommentCount(repo.id);
-          if (!isMounted) return;
-
-          onCommentsCountChange?.(repo.id, totalCount);
-          setRepoCacheEntry(repo, { commentCount: totalCount });
+        let nextCommentCount = latestCache.commentCount;
+        if (nextCommentCount === null || nextCommentCount === undefined) {
+          nextCommentCount = await getCommentCount(repo.id);
         }
+
+        if (cancelled) return;
+
+        setKoDescription(nextKoDescription || "설명이 없습니다.");
+        onCommentsCountChangeRef.current?.(repo.id, nextCommentCount || 0);
+
+        setRepoCacheEntry(repo, {
+          koDescription: nextKoDescription || "설명이 없습니다.",
+          commentCount: nextCommentCount || 0,
+          lightLoaded: true,
+        });
+
+        lightLoadedRef.current = true;
       } catch (error) {
         console.error("카드 기본 데이터 로드 에러:", error);
-        if (isMounted && !cached.koDescription) {
+
+        if (!cancelled) {
           setKoDescription(repo.description || "설명이 없습니다.");
         }
+      } finally {
+        lightLoadingRef.current = false;
       }
     };
 
     const loadHeavyData = async () => {
-      if (hasLoadedHeavyRef.current) return;
-      hasLoadedHeavyRef.current = true;
+      if (heavyLoadedRef.current || heavyLoadingRef.current) return;
+      heavyLoadingRef.current = true;
 
       try {
-        if (
-          cached.originalReadme &&
-          cached.koReadme &&
-          Object.prototype.hasOwnProperty.call(cached, "readmeImage")
-        ) {
-          if (!isMounted) return;
+        const latestCache = getInitialCacheEntry(repo);
 
-          setOriginalReadme(cached.originalReadme);
-          setKoReadme(cached.koReadme);
-          setReadmeImage(cached.readmeImage || null);
+        if (latestCache.heavyLoaded) {
+          if (cancelled) return;
+
+          setReadmeImage(latestCache.readmeImage || null);
+          setOriginalReadme(latestCache.originalReadme || "");
+          setKoReadme(
+            latestCache.koReadme || "README 데이터를 찾을 수 없습니다.",
+          );
+          heavyLoadedRef.current = true;
           return;
         }
 
@@ -118,35 +158,35 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           getReadmeSummary(repo.owner.login, repo.name, repo.default_branch),
         ]);
 
-        if (!isMounted) return;
+        if (cancelled) return;
 
         const safeReadme = readmeText || "";
         const translatedReadme = safeReadme
           ? await translateToKorean(safeReadme)
           : "README 데이터를 찾을 수 없습니다.";
 
-        if (!isMounted) return;
+        if (cancelled) return;
 
         setReadmeImage(imageUrl || null);
         setOriginalReadme(safeReadme);
-        setKoReadme(translatedReadme);
+        setKoReadme(translatedReadme || "README 데이터를 찾을 수 없습니다.");
 
         setRepoCacheEntry(repo, {
           readmeImage: imageUrl || null,
           originalReadme: safeReadme,
-          koReadme: translatedReadme,
+          koReadme: translatedReadme || "README 데이터를 찾을 수 없습니다.",
           heavyLoaded: true,
         });
+
+        heavyLoadedRef.current = true;
       } catch (error) {
         console.error("카드 상세 데이터 로드 에러:", error);
 
-        if (!isMounted) return;
-
-        setKoReadme((prev) =>
-          prev === "README 불러오는 중..."
-            ? "README 데이터를 찾을 수 없습니다."
-            : prev,
-        );
+        if (!cancelled) {
+          setReadmeImage(null);
+          setOriginalReadme("");
+          setKoReadme("README 데이터를 찾을 수 없습니다.");
+        }
 
         setRepoCacheEntry(repo, {
           readmeImage: null,
@@ -154,6 +194,10 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           koReadme: "README 데이터를 찾을 수 없습니다.",
           heavyLoaded: true,
         });
+
+        heavyLoadedRef.current = true;
+      } finally {
+        heavyLoadingRef.current = false;
       }
     };
 
@@ -161,16 +205,10 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
       (entries) => {
         const entry = entries[0];
 
-        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
-          onVisible?.(repo);
-          loadHeavyData();
-        }
-
         if (entry.isIntersecting) {
           loadLightData();
-        }
+          loadHeavyData();
 
-        if (entry.isIntersecting) {
           if (!viewStartTime.current) {
             viewStartTime.current = Date.now();
             hasRecordedSignal.current = false;
@@ -187,6 +225,10 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
           viewStartTime.current = null;
         }
+
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          onVisible?.(repo);
+        }
       },
       { threshold: [0.1, 0.6] },
     );
@@ -196,10 +238,10 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     }
 
     return () => {
-      isMounted = false;
+      cancelled = true;
       observer.disconnect();
     };
-  }, [repo, onVisible, onCommentsCountChange, cached]);
+  }, [repo, repoKey, onVisible]);
 
   const displayDescription = isKorean
     ? koDescription
