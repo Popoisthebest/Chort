@@ -121,6 +121,100 @@ const fetchText = async (url, options = {}) => {
   return response.text();
 };
 
+const decodeHtmlEntities = (text) => {
+  if (!text) return "";
+  const textarea = document.createElement("textarea");
+  textarea.innerHTML = text;
+  return textarea.value;
+};
+
+const normalizeWhitespace = (text) => {
+  return String(text || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+};
+
+const shouldSkipTranslationNode = (node) => {
+  const parent = node.parentElement;
+  if (!parent) return true;
+
+  const skipTags = new Set([
+    "CODE",
+    "PRE",
+    "SCRIPT",
+    "STYLE",
+    "SVG",
+    "IMG",
+    "NOSCRIPT",
+    "TEXTAREA",
+    "INPUT",
+    "BUTTON",
+    "OPTION",
+  ]);
+
+  if (skipTags.has(parent.tagName)) {
+    return true;
+  }
+
+  if (parent.closest("code, pre, script, style, svg")) {
+    return true;
+  }
+
+  return false;
+};
+
+const isTranslatableText = (text) => {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) return false;
+
+  if (normalized.length < 2) return false;
+
+  // 코드/기호 위주 문자열 제외
+  const letters =
+    normalized.match(/[A-Za-z\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]/g) || [];
+  if (letters.length === 0) return false;
+
+  return true;
+};
+
+const chunkText = (text, maxLength = 800) => {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) return [];
+
+  if (normalized.length <= maxLength) {
+    return [normalized];
+  }
+
+  const sentences = normalized.split(/(?<=[.!?。！？])\s+|\n+/);
+  const chunks = [];
+  let current = "";
+
+  for (const sentence of sentences) {
+    const piece = sentence.trim();
+    if (!piece) continue;
+
+    if (!current) {
+      current = piece;
+      continue;
+    }
+
+    if ((current + " " + piece).length <= maxLength) {
+      current += ` ${piece}`;
+    } else {
+      chunks.push(current);
+      current = piece;
+    }
+  }
+
+  if (current) {
+    chunks.push(current);
+  }
+
+  return chunks;
+};
+
 export const clearGithubApiCache = () => {
   const keysToDelete = [];
 
@@ -272,12 +366,6 @@ const cleanReadmeText = (text) => {
     .replace(/!\[.*?\]\(.*?\)/g, "")
     .replace(/<img[^>]*>/gi, "")
     .replace(/\[([^\]]+)\]\((.*?)\)/g, "$1")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
     .replace(/<\/?[^>]+>/g, "")
     .replace(/^\s*[-|:]{3,}\s*$/gm, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -391,6 +479,112 @@ export const getRenderedReadmeHtml = async (
   );
 };
 
+export const getTranslatedText = async (text, target = "ko") => {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) return "";
+
+  return cachedRequest(
+    `translate:${target}:${normalized}`,
+    async () => {
+      try {
+        const response = await fetch(
+          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(normalized)}`,
+        );
+        const data = await response.json();
+        return normalizeWhitespace(
+          data?.[0]?.map((item) => item[0]).join("") || normalized,
+        );
+      } catch (error) {
+        console.error("번역 에러:", error);
+        return normalized;
+      }
+    },
+    TRANSLATE_TTL,
+  );
+};
+
+export const translateToKorean = async (text) => {
+  if (!text) return "";
+  const chunks = chunkText(text, 800);
+  const translated = await Promise.all(
+    chunks.map((chunk) => getTranslatedText(chunk, "ko")),
+  );
+  return translated.join("\n\n").trim();
+};
+
+export const getTranslatedRenderedReadmeHtml = async (
+  owner,
+  repo,
+  defaultBranch = "main",
+  target = "ko",
+) => {
+  return cachedRequest(
+    `readme-rendered-html-translated:${owner}/${repo}:${defaultBranch}:${target}`,
+    async () => {
+      const html = await getRenderedReadmeHtml(owner, repo, defaultBranch);
+      if (!html || typeof window === "undefined") return "";
+
+      try {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+
+        const textNodes = [];
+        let currentNode = walker.nextNode();
+
+        while (currentNode) {
+          if (
+            currentNode.nodeType === Node.TEXT_NODE &&
+            !shouldSkipTranslationNode(currentNode) &&
+            isTranslatableText(currentNode.nodeValue)
+          ) {
+            textNodes.push(currentNode);
+          }
+          currentNode = walker.nextNode();
+        }
+
+        const uniqueTexts = [
+          ...new Set(
+            textNodes
+              .map((node) => normalizeWhitespace(node.nodeValue))
+              .filter(Boolean),
+          ),
+        ];
+
+        const translationMap = new Map();
+
+        for (const originalText of uniqueTexts) {
+          const translated = await getTranslatedText(originalText, target);
+          translationMap.set(originalText, translated || originalText);
+        }
+
+        textNodes.forEach((node) => {
+          const originalText = normalizeWhitespace(node.nodeValue);
+          if (!originalText) return;
+
+          const translated = translationMap.get(originalText);
+          if (translated) {
+            node.nodeValue = node.nodeValue.replace(
+              decodeHtmlEntities(originalText),
+              translated,
+            );
+
+            if (normalizeWhitespace(node.nodeValue) === originalText) {
+              node.nodeValue = translated;
+            }
+          }
+        });
+
+        return doc.body.innerHTML || "";
+      } catch (error) {
+        console.error("README HTML 번역 에러:", error);
+        return "";
+      }
+    },
+    TRANSLATE_TTL,
+  );
+};
+
 export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
   const candidateBranches = getReadmeCandidateBranches(defaultBranch);
 
@@ -420,30 +614,6 @@ export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
       return imageUrl || null;
     },
     README_TTL,
-  );
-};
-
-export const translateToKorean = async (text) => {
-  if (!text) return "";
-
-  const safeText = text.substring(0, 800);
-  const cacheKey = `translate:ko:${safeText}`;
-
-  return cachedRequest(
-    cacheKey,
-    async () => {
-      try {
-        const response = await fetch(
-          `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ko&dt=t&q=${encodeURIComponent(safeText)}`,
-        );
-        const data = await response.json();
-        return data?.[0]?.map((item) => item[0]).join("") || text;
-      } catch (error) {
-        console.error("번역 에러:", error);
-        return text;
-      }
-    },
-    TRANSLATE_TTL,
   );
 };
 
