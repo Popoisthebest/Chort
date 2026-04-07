@@ -26,13 +26,15 @@ service cloud.firestore {
           "displayName",
           "photoURL",
           "createdAt",
-          "replyCount"
+          "replyCount",
+          "clientRequestId"
         ])
         && isNonEmptyString(request.resource.data.repoId, 120)
         && isNonEmptyString(request.resource.data.text, 2000)
         && request.resource.data.userId == request.auth.uid
         && isNonEmptyString(request.resource.data.displayName, 120)
         && isOptionalString(request.resource.data.photoURL, 500)
+        && isOptionalString(request.resource.data.clientRequestId, 120)
         && request.resource.data.replyCount is int
         && request.resource.data.replyCount == 0;
 
@@ -53,12 +55,14 @@ service cloud.firestore {
             "displayName",
             "photoURL",
             "text",
-            "createdAt"
+            "createdAt",
+            "clientRequestId"
           ])
           && request.resource.data.userId == request.auth.uid
           && isNonEmptyString(request.resource.data.displayName, 120)
           && isOptionalString(request.resource.data.photoURL, 500)
-          && isNonEmptyString(request.resource.data.text, 1000);
+          && isNonEmptyString(request.resource.data.text, 1000)
+          && isOptionalString(request.resource.data.clientRequestId, 120);
 
         allow delete: if isSignedIn()
           && resource.data.userId == request.auth.uid;

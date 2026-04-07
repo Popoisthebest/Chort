@@ -18,8 +18,8 @@ import {
   where,
   serverTimestamp,
   runTransaction,
+  setDoc,
 } from "firebase/firestore";
-// [구조개선] 중복 normalizeDate 제거 → formatters.js의 safeToDate로 통일
 import { safeToDate } from "../utils/formatters";
 
 const firebaseConfig = {
@@ -254,6 +254,10 @@ const invalidateCommentCountCache = (repoId) => {
   }
 };
 
+const makeClientRequestId = () => {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+};
+
 export const loginWithGithub = async () => {
   try {
     const result = await signInWithPopup(auth, githubProvider);
@@ -303,7 +307,6 @@ export const getComments = async (repoId) => {
           userId: data.userId || "",
           displayName: data.displayName || "익명",
           photoURL: data.photoURL || "",
-          // [구조개선] normalizeDate → safeToDate
           createdAt: safeToDate(data.createdAt),
           replyCount: Number.isFinite(data.replyCount) ? data.replyCount : 0,
         };
@@ -336,24 +339,27 @@ export const getCommentCount = async (repoId) => {
   );
 };
 
-export const addComment = async (repoId, text, user) => {
-  if (!user || !text.trim()) return null;
+export const addComment = async (repoId, text, user, clientRequestId) => {
+  const trimmed = text?.trim();
+  if (!user || !trimmed) return null;
 
   try {
     const identity = resolveGithubIdentity(user);
+    const commentRef = doc(collection(db, "comments"));
 
-    const docRef = await addDoc(collection(db, "comments"), {
+    await setDoc(commentRef, {
       repoId: String(repoId),
-      text: text.trim(),
+      text: trimmed,
       userId: user.uid,
       displayName: identity.displayName,
       photoURL: identity.photoURL,
       createdAt: serverTimestamp(),
       replyCount: 0,
+      clientRequestId: clientRequestId || makeClientRequestId(),
     });
 
     invalidateCommentCountCache(repoId);
-    return { id: docRef.id };
+    return { id: commentRef.id };
   } catch (error) {
     console.error("댓글 추가 에러:", error);
     return null;
@@ -387,46 +393,45 @@ export const deleteComment = async (commentId) => {
   }
 };
 
-// [버그수정] addReply: addDoc + runTransaction 분리 → 단일 트랜잭션으로 통합
-// 이전 구조는 addDoc 성공 후 트랜잭션 실패 시 고아(orphan) 답글 문서가 남았음
-export const addReply = async (commentId, text, user) => {
-  if (!user || !text.trim()) {
+export const addReply = async (commentId, text, user, clientRequestId) => {
+  const trimmed = text?.trim();
+  if (!user || !trimmed) {
     console.error("사용자 정보 또는 답글 내용이 없습니다.");
     return null;
   }
 
   try {
     const commentRef = doc(db, "comments", commentId);
+    const replyRef = doc(collection(db, "comments", commentId, "replies"));
     const identity = resolveGithubIdentity(user);
 
-    const replyId = await runTransaction(db, async (transaction) => {
+    const repoId = await runTransaction(db, async (transaction) => {
       const commentSnap = await transaction.get(commentRef);
 
       if (!commentSnap.exists()) {
         throw new Error("원본 댓글이 존재하지 않습니다.");
       }
 
-      const replyRef = doc(collection(db, "comments", commentId, "replies"));
       transaction.set(replyRef, {
         userId: user.uid,
         displayName: identity.displayName,
         photoURL: identity.photoURL,
-        text: text.trim(),
+        text: trimmed,
         createdAt: serverTimestamp(),
+        clientRequestId: clientRequestId || makeClientRequestId(),
       });
 
       const current = commentSnap.data()?.replyCount || 0;
       transaction.update(commentRef, { replyCount: current + 1 });
 
-      return replyRef.id;
+      return commentSnap.data()?.repoId || null;
     });
 
-    const repoId = (await getDoc(commentRef)).data()?.repoId || null;
     if (repoId) {
       invalidateCommentCountCache(repoId);
     }
 
-    return { id: replyId };
+    return { id: replyRef.id };
   } catch (error) {
     console.error("답글 저장 에러:", error);
     return null;
@@ -448,7 +453,6 @@ export const getReplies = async (commentId) => {
           displayName: data.displayName || "익명",
           photoURL: data.photoURL || "",
           text: data.text || "",
-          // [구조개선] normalizeDate → safeToDate
           createdAt: safeToDate(data.createdAt),
         };
       })
@@ -459,7 +463,6 @@ export const getReplies = async (commentId) => {
   }
 };
 
-// [버그수정] deleteReply: deleteDoc 후 트랜잭션 실패 시 카운트 불일치 → 단일 트랜잭션으로 통합
 export const deleteReply = async (commentId, replyId) => {
   try {
     const commentRef = doc(db, "comments", commentId);

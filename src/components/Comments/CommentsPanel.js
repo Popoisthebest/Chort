@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { X, Send, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import {
   auth,
@@ -11,6 +11,9 @@ import {
 } from "../../api/firebase";
 import { formatDateTimeKo, formatTimeKo } from "../../utils/formatters";
 
+const makeClientRequestId = () =>
+  `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
 export default function CommentsPanel({ repo, onClose }) {
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
@@ -19,6 +22,13 @@ export default function CommentsPanel({ repo, onClose }) {
   const [repliesByCommentId, setRepliesByCommentId] = useState({});
   const [replyTextByCommentId, setReplyTextByCommentId] = useState({});
   const [loadingReplies, setLoadingReplies] = useState({});
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const [submittingReplyByCommentId, setSubmittingReplyByCommentId] = useState(
+    {},
+  );
+
+  const lastCommentSubmitRef = useRef("");
+  const lastReplySubmitRef = useRef({});
 
   const loadComments = useCallback(async () => {
     setLoadingComments(true);
@@ -31,17 +41,42 @@ export default function CommentsPanel({ repo, onClose }) {
     setExpandedCommentId(null);
     setRepliesByCommentId({});
     setReplyTextByCommentId({});
+    setSubmittingComment(false);
+    setSubmittingReplyByCommentId({});
+    lastCommentSubmitRef.current = "";
+    lastReplySubmitRef.current = {};
     loadComments();
   }, [loadComments]);
 
   const handleAddComment = async () => {
     const user = auth.currentUser;
-    if (!user || !commentText.trim()) return;
+    const trimmed = commentText.trim();
 
-    const result = await addComment(repo.id, commentText, user);
-    if (result) {
-      setCommentText("");
-      await loadComments();
+    if (!user || !trimmed || submittingComment) return;
+    if (lastCommentSubmitRef.current === trimmed) return;
+
+    setSubmittingComment(true);
+    lastCommentSubmitRef.current = trimmed;
+
+    try {
+      const result = await addComment(
+        repo.id,
+        trimmed,
+        user,
+        makeClientRequestId(),
+      );
+
+      if (result) {
+        setCommentText("");
+        await loadComments();
+      }
+    } finally {
+      setSubmittingComment(false);
+      setTimeout(() => {
+        if (lastCommentSubmitRef.current === trimmed) {
+          lastCommentSubmitRef.current = "";
+        }
+      }, 800);
     }
   };
 
@@ -79,14 +114,45 @@ export default function CommentsPanel({ repo, onClose }) {
 
   const handleAddReply = async (commentId) => {
     const user = auth.currentUser;
-    const replyText = replyTextByCommentId[commentId];
+    const replyText = replyTextByCommentId[commentId] || "";
+    const trimmed = replyText.trim();
+    const isSubmitting = !!submittingReplyByCommentId[commentId];
 
-    if (!user || !replyText?.trim()) return;
+    if (!user || !trimmed || isSubmitting) return;
+    if (lastReplySubmitRef.current[commentId] === trimmed) return;
 
-    const result = await addReply(commentId, replyText, user);
-    if (result) {
-      setReplyTextByCommentId((prev) => ({ ...prev, [commentId]: "" }));
-      await Promise.all([loadReplies(commentId), loadComments()]);
+    setSubmittingReplyByCommentId((prev) => ({ ...prev, [commentId]: true }));
+    lastReplySubmitRef.current = {
+      ...lastReplySubmitRef.current,
+      [commentId]: trimmed,
+    };
+
+    try {
+      const result = await addReply(
+        commentId,
+        trimmed,
+        user,
+        makeClientRequestId(),
+      );
+
+      if (result) {
+        setReplyTextByCommentId((prev) => ({ ...prev, [commentId]: "" }));
+        await Promise.all([loadReplies(commentId), loadComments()]);
+      }
+    } finally {
+      setSubmittingReplyByCommentId((prev) => ({
+        ...prev,
+        [commentId]: false,
+      }));
+
+      setTimeout(() => {
+        if (lastReplySubmitRef.current[commentId] === trimmed) {
+          lastReplySubmitRef.current = {
+            ...lastReplySubmitRef.current,
+            [commentId]: "",
+          };
+        }
+      }, 800);
     }
   };
 
@@ -266,7 +332,10 @@ export default function CommentsPanel({ repo, onClose }) {
 
                     <button
                       onClick={() => handleAddReply(comment.id)}
-                      disabled={!replyTextByCommentId[comment.id]?.trim()}
+                      disabled={
+                        !replyTextByCommentId[comment.id]?.trim() ||
+                        !!submittingReplyByCommentId[comment.id]
+                      }
                       className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded px-2 py-1 transition flex items-center"
                     >
                       <Send className="w-3 h-3" />
@@ -296,7 +365,7 @@ export default function CommentsPanel({ repo, onClose }) {
           />
           <button
             onClick={handleAddComment}
-            disabled={!commentText.trim()}
+            disabled={!commentText.trim() || submittingComment}
             className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-lg px-3 py-2 transition flex items-center gap-1"
           >
             <Send className="w-4 h-4" />
