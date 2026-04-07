@@ -1,29 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
-import {
-  Star,
-  Share2,
-  Code,
-  Terminal,
-  FileText,
-  AlignLeft,
-  Languages,
-  MessageCircle,
-  Send,
-  Trash2,
-  ChevronDown,
-  ChevronUp,
-} from "lucide-react";
+import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { getReadmeImage, starRepo, unstarRepo } from "../../api/github";
-import {
-  auth,
-  getComments as fetchComments,
-  addComment,
-  deleteComment,
-  getReplies as fetchReplies,
-  addReply,
-  deleteReply,
-} from "../../api/firebase";
+import { getReadmeImage } from "../../api/github";
+import { getComments as fetchComments } from "../../api/firebase";
+import { recordView, recordSkip } from "../../utils/userProfile";
 
 const translateToKorean = async (text) => {
   if (!text) return "";
@@ -40,8 +20,7 @@ const translateToKorean = async (text) => {
   }
 };
 
-const ChortCard = ({ repo, onCommentClick }) => {
-  const [isStarred, setIsStarred] = useState(false);
+const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   const [readmeImage, setReadmeImage] = useState(null);
 
   const [originalReadme, setOriginalReadme] = useState("");
@@ -49,97 +28,120 @@ const ChortCard = ({ repo, onCommentClick }) => {
   const [koReadme, setKoReadme] = useState("번역 중...");
   const [isKorean, setIsKorean] = useState(true);
 
-  // 댓글 관련 state
-  const [comments, setComments] = useState([]);
-  const [commentText, setCommentText] = useState("");
-  const [loadingComments, setLoadingComments] = useState(false);
-
-  // 답글 관련 state
-  const [expandedCommentId, setExpandedCommentId] = useState(null);
-  const [repliesByCommentId, setRepliesByCommentId] = useState({});
-  const [replyTextByCommentId, setReplyTextByCommentId] = useState({});
-  const [loadingReplies, setLoadingReplies] = useState({});
-
   const cardRef = useRef(null);
-  const hasFetched = useRef(false); // 💡 이미 데이터를 가져왔는지 기억하는 변수
+  const hasFetched = useRef(false);
+  const viewStartTime = useRef(null);
+  const hasRecordedSignal = useRef(false);
   const ogImageUrl = `https://opengraph.githubassets.com/1/${repo.full_name}`;
 
   useEffect(() => {
-    // 1. 보관함(Saved) 여부는 API를 안 쓰니 바로 계산합니다.
-    const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
-    setIsStarred(savedRepos.some((r) => r.id === repo.id));
-
-    // 2. 무거운 데이터(번역, 이미지, 리드미)를 가져오는 함수
-    const fetchData = async () => {
-      const imgUrl = await getReadmeImage(
-        repo.owner.login,
-        repo.name,
-        repo.default_branch,
-      );
-      setReadmeImage(imgUrl);
-
-      const translatedDesc = await translateToKorean(repo.description);
-      setKoDescription(translatedDesc);
-
-      let cleanText = "";
+    const loadCommentsCount = async () => {
       try {
-        const urls = [
-          `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/main/README.md`,
-          `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/master/README.md`,
-        ];
-        for (const url of urls) {
-          const res = await fetch(url);
-          if (res.ok) {
-            const text = await res.text();
-
-            let noHtmlText = text
-              .replace(/<!--[\s\S]*?-->/g, "") // 1. HTML 주석 제거 (안에 내용을 꼭 채워주세요!)
-              .replace(/!\[.*?\]\(.*?\)/g, "")
-              .replace(/<picture>[\s\S]*?<\/picture>/gi, "")
-              .replace(
-                /<\/?(p|div|a|span|h[1-6]|br|hr|source|img|svg|path)[^>]*>/gi,
-                "",
-              );
-
-            let lines = noHtmlText.split("\n").slice(0, 8).join("\n");
-            const codeBlockCount = (lines.match(/```/g) || []).length;
-            if (codeBlockCount % 2 !== 0) {
-              lines += "\n```";
-            }
-
-            cleanText = lines;
-            break;
-          }
-        }
+        const loadedComments = await fetchComments(repo.id);
+        const totalCount = loadedComments.reduce(
+          (sum, comment) => sum + 1 + (comment.replyCount || 0),
+          0,
+        );
+        onCommentsCountChange?.(repo.id, totalCount);
       } catch (error) {
-        console.error("README 파싱 에러:", error);
+        console.error("댓글 수 로드 에러:", error);
+        onCommentsCountChange?.(repo.id, 0);
       }
-
-      setOriginalReadme(cleanText ? cleanText : "");
-
-      if (cleanText) {
-        // 💡 구글 번역 API 부하를 줄이기 위해 약간의 딜레이(0.3초)를 줍니다.
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        const translatedReadmeText = await translateToKorean(cleanText);
-        setKoReadme(translatedReadmeText);
-      } else {
-        setKoReadme("README 데이터를 찾을 수 없습니다.");
-      }
-
-      // 💡 카드가 보일 때 댓글 개수도 함께 로드
-      await loadComments();
     };
 
-    // 3. 💡 화면 감지 센서 (Intersection Observer)
+    const fetchData = async () => {
+      try {
+        const imgUrl = await getReadmeImage(
+          repo.owner.login,
+          repo.name,
+          repo.default_branch,
+        );
+        setReadmeImage(imgUrl);
+
+        const translatedDesc = await translateToKorean(repo.description);
+        setKoDescription(translatedDesc);
+
+        let cleanText = "";
+        try {
+          const urls = [
+            `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/main/README.md`,
+            `https://raw.githubusercontent.com/${repo.owner.login}/${repo.name}/master/README.md`,
+          ];
+
+          for (const url of urls) {
+            const res = await fetch(url);
+            if (res.ok) {
+              const text = await res.text();
+
+              let noHtmlText = text
+                .replace(/<!--[\s\S]*?-->/g, "")
+                .replace(/!\[.*?\]\(.*?\)/g, "")
+                .replace(/<picture>[\s\S]*?<\/picture>/gi, "")
+                .replace(
+                  /<\/?(p|div|a|span|h[1-6]|br|hr|source|img|svg|path)[^>]*>/gi,
+                  "",
+                );
+
+              let lines = noHtmlText.split("\n").slice(0, 8).join("\n");
+              const codeBlockCount = (lines.match(/```/g) || []).length;
+              if (codeBlockCount % 2 !== 0) {
+                lines += "\n```";
+              }
+
+              cleanText = lines;
+              break;
+            }
+          }
+        } catch (error) {
+          console.error("README 파싱 에러:", error);
+        }
+
+        setOriginalReadme(cleanText || "");
+
+        if (cleanText) {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const translatedReadmeText = await translateToKorean(cleanText);
+          setKoReadme(translatedReadmeText);
+        } else {
+          setKoReadme("README 데이터를 찾을 수 없습니다.");
+        }
+
+        await loadCommentsCount();
+      } catch (error) {
+        console.error("카드 데이터 로드 에러:", error);
+      }
+    };
+
     const observer = new IntersectionObserver(
       (entries) => {
-        // 카드가 화면에 조금이라도 들어왔고(isIntersecting), 아직 데이터를 안 가져왔다면(!hasFetched.current)
-        if (entries[0].isIntersecting && !hasFetched.current) {
-          hasFetched.current = true; // 이제 가져왔다고 표시
-          fetchData(); // 데이터 패칭 시작!
+        const entry = entries[0];
+
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          onVisible?.(repo);
+        }
+
+        if (entry.isIntersecting && !hasFetched.current) {
+          hasFetched.current = true;
+          fetchData();
+        }
+
+        if (entry.isIntersecting) {
+          viewStartTime.current = Date.now();
+          hasRecordedSignal.current = false;
+        } else {
+          if (viewStartTime.current && !hasRecordedSignal.current) {
+            hasRecordedSignal.current = true;
+            const dwellMs = Date.now() - viewStartTime.current;
+            if (dwellMs < 800) {
+              recordSkip(repo);
+            } else {
+              recordView(repo, dwellMs);
+            }
+            viewStartTime.current = null;
+          }
         }
       },
-      { threshold: 0.1 }, // 카드가 화면에 10% 이상 보일 때 작동
+      { threshold: [0.1, 0.6] },
     );
 
     if (cardRef.current) {
@@ -149,132 +151,12 @@ const ChortCard = ({ repo, onCommentClick }) => {
     return () => {
       observer.disconnect();
     };
-  }, [
-    repo.id,
-    repo.owner.login,
-    repo.name,
-    repo.default_branch,
-    repo.description,
-  ]);
-
-  // 댓글 로드 함수
-  const loadComments = async () => {
-    if (loadingComments) return;
-    setLoadingComments(true);
-    const loadedComments = await fetchComments(repo.id);
-    setComments(loadedComments);
-    setLoadingComments(false);
-  };
-
-  // 댓글 추가 함수
-  const handleAddComment = async () => {
-    const user = auth.currentUser;
-    if (!user || !commentText.trim()) {
-      console.log("사용자 정보 또는 댓글 내용이 없습니다.");
-      return;
-    }
-
-    const result = await addComment(repo.id, commentText, user);
-    if (result) {
-      setCommentText("");
-      await loadComments();
-    }
-  };
-
-  // 댓글 삭제 함수
-  const handleDeleteComment = async (commentId) => {
-    if (window.confirm("이 댓글을 삭제하시겠습니까?")) {
-      const success = await deleteComment(commentId);
-      if (success) {
-        await loadComments();
-      }
-    }
-  };
-
-  // 답글 토글 함수
-  const toggleReplies = async (commentId) => {
-    if (expandedCommentId === commentId) {
-      setExpandedCommentId(null);
-    } else {
-      setExpandedCommentId(commentId);
-      // 답글 로드
-      if (!repliesByCommentId[commentId]) {
-        await loadReplies(commentId);
-      }
-    }
-  };
-
-  // 답글 로드 함수
-  const loadReplies = async (commentId) => {
-    setLoadingReplies((prev) => ({ ...prev, [commentId]: true }));
-    const replies = await fetchReplies(commentId);
-    setRepliesByCommentId((prev) => ({ ...prev, [commentId]: replies }));
-    setLoadingReplies((prev) => ({ ...prev, [commentId]: false }));
-  };
-
-  // 답글 추가 함수
-  const handleAddReply = async (commentId) => {
-    const user = auth.currentUser;
-    const replyText = replyTextByCommentId[commentId];
-    if (!user || !replyText?.trim()) {
-      return;
-    }
-
-    const result = await addReply(commentId, replyText, user);
-    if (result) {
-      setReplyTextByCommentId((prev) => ({ ...prev, [commentId]: "" }));
-      await loadReplies(commentId);
-    }
-  };
-
-  // 답글 삭제 함수
-  const handleDeleteReply = async (commentId, replyId) => {
-    if (window.confirm("이 답글을 삭제하시겠습니까?")) {
-      const success = await deleteReply(commentId, replyId);
-      if (success) {
-        await loadReplies(commentId);
-      }
-    }
-  };
-
-  const toggleStar = async () => {
-    const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
-
-    if (isStarred) {
-      // Star 제거
-      setIsStarred(false); // 즉시 UI 업데이트
-      const success = await unstarRepo(repo.owner.login, repo.name);
-
-      if (success) {
-        const newSaved = savedRepos.filter((r) => r.id !== repo.id);
-        localStorage.setItem("chort_saved", JSON.stringify(newSaved));
-      } else {
-        // 실패 시 원래대로
-        setIsStarred(true);
-      }
-    } else {
-      // Star 추가
-      setIsStarred(true); // 즉시 UI 업데이트
-      const success = await starRepo(repo.owner.login, repo.name);
-
-      if (success) {
-        savedRepos.push(repo);
-        localStorage.setItem("chort_saved", JSON.stringify(savedRepos));
-      } else {
-        // 실패 시 원래대로
-        setIsStarred(false);
-      }
-    }
-  };
-
-  const handleShare = () => {
-    navigator.clipboard.writeText(`https://github.com/${repo.full_name}`);
-    alert("링크가 복사되었습니다! 🚀");
-  };
+  }, [repo, onVisible, onCommentsCountChange]);
 
   const displayDescription = isKorean
     ? koDescription
     : repo.description || "No description provided.";
+
   const displayReadme = isKorean
     ? koReadme
     : originalReadme || "No README data found.";
@@ -293,7 +175,7 @@ const ChortCard = ({ repo, onCommentClick }) => {
         <div className="absolute inset-0 bg-gradient-to-b from-[#0d1117]/80 via-[#0d1117]/95 to-[#0d1117]"></div>
       </div>
 
-      <div className="relative z-10 flex flex-col h-full w-full pt-10 pb-20">
+      <div className="relative z-10 flex flex-col h-full w-full pt-10 pb-10">
         <div className="px-5 pb-4 shrink-0 flex justify-between items-start">
           <div className="pr-10">
             <div
@@ -329,13 +211,11 @@ const ChortCard = ({ repo, onCommentClick }) => {
           </button>
         </div>
 
-        {/* 💡 변경점 1: overflow-y-auto -> overflow-hidden 으로 변경 (내부 스크롤 금지) */}
-        <div className="flex-1 overflow-hidden px-5 relative pr-16 flex flex-col">
+        <div className="flex-1 overflow-hidden px-5 relative flex flex-col">
           <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 backdrop-blur-sm shrink-0">
             <h3 className="text-[10px] font-bold text-blue-400 mb-2 uppercase tracking-wider flex items-center gap-1">
               <AlignLeft className="w-3 h-3" /> Description
             </h3>
-            {/* Description이 너무 길 경우를 대비해 line-clamp 적용 */}
             <p className="text-gray-200 text-sm leading-relaxed break-keep line-clamp-3">
               {displayDescription}
             </p>
@@ -414,7 +294,6 @@ const ChortCard = ({ repo, onCommentClick }) => {
               </ReactMarkdown>
             </div>
 
-            {/* 💡 변경점 2: 하단 페이드아웃 그라데이션 (자연스럽게 잘린 느낌 연출) */}
             <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#151a22] to-transparent pointer-events-none rounded-b-xl flex items-end justify-center pb-2">
               <span className="text-[10px] text-gray-500 font-semibold mb-1">
                 ...Tap Repo to read more
@@ -455,73 +334,6 @@ const ChortCard = ({ repo, onCommentClick }) => {
             </code>
           </div>
         </div>
-      </div>
-
-      {/* 우측 액션 버튼 */}
-      <div className="absolute right-3 bottom-24 flex flex-col gap-5 items-center z-20">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleStar();
-          }}
-          className="flex flex-col items-center transition-transform active:scale-90"
-        >
-          <div
-            className={`p-3 rounded-full backdrop-blur-md transition-all ${isStarred ? "bg-yellow-400/20 border border-yellow-400/50" : "bg-black/50 border border-white/10"}`}
-          >
-            <Star
-              className={`w-6 h-6 ${isStarred ? "fill-yellow-400 text-yellow-400" : "text-white"}`}
-            />
-          </div>
-          <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-            {(repo.stargazers_count / 1000).toFixed(1)}k
-          </span>
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onCommentClick?.();
-          }}
-          className="flex flex-col items-center transition-transform active:scale-90"
-        >
-          <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-            <MessageCircle className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-            {comments.reduce(
-              (sum, comment) => sum + 1 + (comment.replyCount || 0),
-              0,
-            )}
-          </span>
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleShare();
-          }}
-          className="flex flex-col items-center transition-transform active:scale-90"
-        >
-          <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-            <Share2 className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-            Share
-          </span>
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            window.open(`https://github.com/${repo.full_name}`, "_blank");
-          }}
-          className="flex flex-col items-center transition-transform active:scale-90"
-        >
-          <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-            <Code className="w-6 h-6 text-white" />
-          </div>
-          <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-            Repo
-          </span>
-        </button>
       </div>
     </div>
   );

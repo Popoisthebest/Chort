@@ -11,22 +11,21 @@ import {
   collection,
   addDoc,
   query,
-  where,
   orderBy,
   getDocs,
   deleteDoc,
   doc,
 } from "firebase/firestore";
 
-// 💡 Firebase 콘솔 -> 프로젝트 개요 -> 앱 추가(웹)에서 나오는 설정값을 붙여넣으세요.
+// 💡 .env 파일에 저장된 환경 변수를 불러옵니다.
 const firebaseConfig = {
-  apiKey: "AIzaSyAfprrXGFhkQljKkE1qY53r_-atdB91ZXU",
-  authDomain: "chort-3733b.firebaseapp.com",
-  projectId: "chort-3733b",
-  storageBucket: "chort-3733b.firebasestorage.app",
-  messagingSenderId: "249933114283",
-  appId: "1:249933114283:web:8188448cb5a83eeaca00ee",
-  measurementId: "G-WYJV4GJJD9",
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
@@ -41,22 +40,13 @@ githubProvider.addScope("public_repo");
 export const loginWithGithub = async () => {
   try {
     const result = await signInWithPopup(auth, githubProvider);
-
-    // 💡 핵심: GitHub API 호출 한도를 5,000회로 늘려줄 마법의 토큰 추출!
     const credential = GithubAuthProvider.credentialFromResult(result);
-    const token = credential.accessToken;
-
-    // 이 토큰을 로컬 스토리지에 저장해둡니다.
-    if (token) {
-      console.log("✅ GitHub 토큰 저장 완료!");
-      localStorage.setItem("github_token", token);
-    } else {
-      console.warn("⚠️ GitHub 토큰을 받지 못했습니다.");
+    if (credential) {
+      localStorage.setItem("github_token", credential.accessToken);
     }
-
     return result.user;
   } catch (error) {
-    console.error("❌ 로그인 실패:", error);
+    console.error("로그인 에러:", error);
     return null;
   }
 };
@@ -65,80 +55,56 @@ export const loginWithGithub = async () => {
 export const logoutUser = async () => {
   try {
     await signOut(auth);
-    localStorage.removeItem("github_token"); // 로그아웃 시 토큰 삭제
-    console.log("로그아웃 완료");
+    localStorage.removeItem("github_token");
+    console.log("✅ 로그아웃 성공");
   } catch (error) {
     console.error("로그아웃 에러:", error);
   }
 };
 
-// ==========================================
-// Firestore 댓글 관련 함수들
-// ==========================================
-
-// 댓글 추가 함수
-export const addComment = async (repoId, text, user) => {
-  if (!user || !text.trim()) {
-    console.error("사용자 정보 또는 댓글 내용이 없습니다.");
-    return null;
-  }
-
-  try {
-    const docRef = await addDoc(collection(db, "comments"), {
-      repoId,
-      userId: user.uid,
-      userEmail: user.email,
-      displayName: user.displayName,
-      photoURL: user.photoURL,
-      text: text.trim(),
-      createdAt: new Date(),
-    });
-    console.log("✅ 댓글이 저장되었습니다:", docRef.id);
-    return { id: docRef.id };
-  } catch (error) {
-    console.error("댓글 저장 에러:", error);
-    return null;
-  }
-};
-
-// 특정 repo의 댓글 조회 함수
+// 댓글 조회 함수
 export const getComments = async (repoId) => {
   try {
-    const q = query(collection(db, "comments"), where("repoId", "==", repoId));
+    const q = query(collection(db, "comments"), orderBy("createdAt", "desc"));
     const querySnapshot = await getDocs(q);
-    const comments = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate(),
-    }));
-    // 클라이언트 사이드에서 최신순 정렬
-    comments.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-
-    // 각 댓글의 대댓글 개수도 로드
-    const commentsWithReplyCounts = await Promise.all(
-      comments.map(async (comment) => {
-        const repliesRef = collection(db, "comments", comment.id, "replies");
-        const repliesSnapshot = await getDocs(repliesRef);
-        return {
-          ...comment,
-          replyCount: repliesSnapshot.size,
-        };
-      }),
-    );
-
-    console.log("✅ 댓글 조회 완료:", comments.length);
-    return commentsWithReplyCounts;
+    const comments = querySnapshot.docs
+      .map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .filter((comment) => comment.repoId === String(repoId));
+    return comments;
   } catch (error) {
     console.error("댓글 조회 에러:", error);
     return [];
   }
 };
 
-// 댓글 삭제 함수
+// 댓글 추가 함수
+export const addComment = async (repoId, text, user) => {
+  if (!user || !text.trim()) return null;
+
+  try {
+    const docRef = await addDoc(collection(db, "comments"), {
+      repoId: String(repoId),
+      text: text.trim(),
+      userId: user.uid,
+      userName: user.displayName || "익명",
+      userPhoto: user.photoURL || "",
+      createdAt: new Date(),
+      replyCount: 0,
+    });
+    return { id: docRef.id };
+  } catch (error) {
+    console.error("댓글 추가 에러:", error);
+    return null;
+  }
+};
+
+// 특정 댓글 삭제 함수
 export const deleteComment = async (commentId) => {
   try {
     await deleteDoc(doc(db, "comments", commentId));
-    console.log("✅ 댓글이 삭제되었습니다:", commentId);
     return true;
   } catch (error) {
     console.error("댓글 삭제 에러:", error);
@@ -146,11 +112,7 @@ export const deleteComment = async (commentId) => {
   }
 };
 
-// ==========================================
-// Firestore 답글(Reply) 관련 함수들
-// ==========================================
-
-// 답글 추가 함수
+// 특정 댓글에 답글(대댓글) 추가 함수
 export const addReply = async (commentId, text, user) => {
   if (!user || !text.trim()) {
     console.error("사용자 정보 또는 답글 내용이 없습니다.");
@@ -190,16 +152,15 @@ export const getReplies = async (commentId) => {
     replies.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
     return replies;
   } catch (error) {
-    console.error("답글 조회 에러:", error);
+    console.error("답글 로드 에러:", error);
     return [];
   }
 };
 
-// 답글 삭제 함수
+// 특정 답글 삭제 함수
 export const deleteReply = async (commentId, replyId) => {
   try {
     await deleteDoc(doc(db, "comments", commentId, "replies", replyId));
-    console.log("✅ 답글이 삭제되었습니다:", replyId);
     return true;
   } catch (error) {
     console.error("답글 삭제 에러:", error);
