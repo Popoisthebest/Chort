@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Star, GitFork, Trash2 } from "lucide-react";
+import { unstarRepo } from "../api/github";
 
 export default function Saved() {
   const [savedRepos, setSavedRepos] = useState([]);
@@ -10,12 +11,22 @@ export default function Saved() {
     setSavedRepos(loaded);
   }, []);
 
-  // 보관함에서 삭제하는 함수
-  const removeRepo = (id, e) => {
+  // 보관함에서 삭제하는 함수 (GitHub unstar 동기화 포함)
+  const removeRepo = async (repo, e) => {
     e.stopPropagation(); // 카드 클릭(링크 이동) 이벤트 무시
-    const newSaved = savedRepos.filter((repo) => repo.id !== id);
+    const previousSaved = savedRepos;
+    const newSaved = savedRepos.filter((item) => item.id !== repo.id);
+
+    // UI는 먼저 반영하고, 실패 시 롤백
     localStorage.setItem("chort_saved", JSON.stringify(newSaved));
     setSavedRepos(newSaved);
+
+    const success = await unstarRepo(repo.owner.login, repo.name);
+    if (!success) {
+      alert("GitHub에서 별 취소에 실패했습니다. 다시 시도해주세요.");
+      localStorage.setItem("chort_saved", JSON.stringify(previousSaved));
+      setSavedRepos(previousSaved);
+    }
   };
 
   return (
@@ -77,7 +88,7 @@ export default function Saved() {
 
                   {/* 삭제 버튼 */}
                   <button
-                    onClick={(e) => removeRepo(repo.id, e)}
+                    onClick={(e) => removeRepo(repo, e)}
                     className="p-2 bg-gray-800 rounded-full hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition"
                   >
                     <Trash2 className="w-4 h-4" />
