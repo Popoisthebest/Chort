@@ -1,5 +1,9 @@
 // src/components/Card/ChortCard.js
+// [보안 수정] 커스텀 sanitizer → DOMPurify 교체
+// 설치: npm install dompurify
+// 설치: npm install --save-dev @types/dompurify  (TypeScript 사용 시)
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import DOMPurify from "dompurify";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import {
   getReadmeImage,
@@ -35,71 +39,72 @@ const setRepoCacheEntry = (repo, patch) => {
   repoDetailCache.set(key, { ...prev, ...patch });
 };
 
+// [보안 수정] 커스텀 sanitizer 제거 → DOMPurify 사용
+// DOMPurify는 OWASP 기준을 충족하는 검증된 라이브러리로,
+// data: URI, vbscript:, SVG foreignObject, CSS expression() 등
+// 커스텀 구현에서 놓칠 수 있는 모든 XSS 벡터를 처리함
+const DOMPURIFY_CONFIG = {
+  // 허용 태그를 README 렌더링에 필요한 것만으로 제한
+  ALLOWED_TAGS: [
+    "a",
+    "b",
+    "blockquote",
+    "br",
+    "code",
+    "del",
+    "em",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+    "i",
+    "li",
+    "ol",
+    "p",
+    "pre",
+    "s",
+    "strong",
+    "table",
+    "tbody",
+    "td",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+  ],
+  // 허용 속성을 최소화
+  ALLOWED_ATTR: ["href", "title", "rel", "target"],
+  // javascript:, vbscript:, data: URI 등 위험한 프로토콜 차단
+  ALLOW_DATA_ATTR: false,
+  FORCE_BODY: true,
+  // a 태그 href에서 안전한 프로토콜만 허용
+  ALLOWED_URI_REGEXP: /^https?:\/\//i,
+};
+
+// DOMPurify 훅: a 태그에 자동으로 target="_blank" rel="noreferrer noopener" 추가
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noreferrer noopener");
+  }
+});
+
 const sanitizeRenderedHtml = (html) => {
   if (!html || typeof window === "undefined") return "";
-
   try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    const blockedSelectors = [
-      "script",
-      "style",
-      "img",
-      "iframe",
-      "object",
-      "embed",
-      "form",
-      "input",
-      "button",
-      "textarea",
-      "select",
-      "meta",
-      "link",
-    ];
-
-    doc
-      .querySelectorAll(blockedSelectors.join(","))
-      .forEach((node) => node.remove());
-
-    doc.querySelectorAll("*").forEach((node) => {
-      [...node.attributes].forEach((attr) => {
-        const name = attr.name.toLowerCase();
-        const value = attr.value;
-
-        if (name.startsWith("on")) {
-          node.removeAttribute(attr.name);
-          return;
-        }
-        if (
-          (name === "href" || name === "src") &&
-          /^\s*javascript:/i.test(value)
-        ) {
-          node.removeAttribute(attr.name);
-          return;
-        }
-        if (name === "style") {
-          node.removeAttribute(attr.name);
-          return;
-        }
-      });
-
-      if (node.tagName === "A") {
-        node.setAttribute("target", "_blank");
-        node.setAttribute("rel", "noreferrer noopener");
-      }
-    });
-
-    return doc.body.innerHTML || "";
+    return DOMPurify.sanitize(html, DOMPURIFY_CONFIG);
   } catch (error) {
-    console.error("README HTML sanitize 에러:", error);
+    console.error("README HTML sanitize 에러:", error.message);
     return "";
   }
 };
 
 const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   const repoKey = repo.full_name;
-  const cacheEntry = useMemo(() => getInitialCacheEntry(repo), [repoKey]);
+  const cacheEntry = useMemo(() => getInitialCacheEntry(repo), [repo]);
 
   const [readmeImage, setReadmeImage] = useState(
     cacheEntry.readmeImage || null,
@@ -131,7 +136,6 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     onCommentsCountChangeRef.current = onCommentsCountChange;
   }, [onCommentsCountChange]);
 
-  // repo 교체 시 상태 리셋
   useEffect(() => {
     const latestCache = getInitialCacheEntry(repo);
     setReadmeImage(latestCache.readmeImage || null);
@@ -145,12 +149,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     heavyLoadingRef.current = false;
     viewStartTime.current = null;
     hasRecordedSignal.current = false;
-  }, [repoKey]);
+  }, [repoKey, repo]);
 
-  // [성능개선] useEffect 의존성에서 repo 객체 제거 → repoKey(string)만 사용
-  // 이전: [repo, repoKey, onVisible] — repo 객체는 매 렌더마다 새 참조 생성
-  //       → 피드에 새 배치 추가될 때마다 모든 카드의 옵저버가 재생성됨
-  // 이후: [repoKey, onVisible] — 실제 레포가 바뀔 때만 재실행
   useEffect(() => {
     let cancelled = false;
 
@@ -181,7 +181,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         });
         lightLoadedRef.current = true;
       } catch (error) {
-        console.error("카드 기본 데이터 로드 에러:", error);
+        console.error("카드 기본 데이터 로드 에러:", error.message);
         if (!cancelled)
           setKoDescription(repo.description || "설명이 없습니다.");
       } finally {
@@ -219,6 +219,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         if (cancelled) return;
 
+        // [보안 수정] DOMPurify 기반 sanitize 적용
         const safeHtml = sanitizeRenderedHtml(html || "");
         const safeFallback = summaryText || "README 데이터를 찾을 수 없습니다.";
 
@@ -233,7 +234,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         });
         heavyLoadedRef.current = true;
       } catch (error) {
-        console.error("카드 상세 데이터 로드 에러:", error);
+        console.error("카드 상세 데이터 로드 에러:", error.message);
         if (!cancelled) {
           setReadmeImage(null);
           setRenderedReadmeHtml("");
@@ -286,7 +287,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
       cancelled = true;
       observer.disconnect();
     };
-  }, [repoKey, onVisible]); // [성능개선] repo 객체 제거
+  }, [repoKey, repo, onVisible]);
 
   const displayDescription = isKorean
     ? koDescription
@@ -423,7 +424,6 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           </div>
         </div>
       </div>
-      {/* [구조개선] inline <style> 제거 → index.css로 이동 */}
     </div>
   );
 };

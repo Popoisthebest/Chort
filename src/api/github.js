@@ -127,7 +127,6 @@ const fetchGithubJsonWithPublicFallback = async (url) => {
     return { response, data: null };
   }
 
-  // 토큰 만료/권한 이슈 시 공개 저장소는 비인증 요청으로 재시도
   const fallbackResponse = await fetch(url, {
     headers: { Accept: "application/vnd.github+json" },
   });
@@ -138,52 +137,12 @@ const fetchGithubJsonWithPublicFallback = async (url) => {
   return { response: fallbackResponse, data: fallbackData };
 };
 
-const decodeHtmlEntities = (text) => {
-  if (!text) return "";
-  const textarea = document.createElement("textarea");
-  textarea.innerHTML = text;
-  return textarea.value;
-};
-
 const normalizeWhitespace = (text) => {
   return String(text || "")
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-};
-
-const shouldSkipTranslationNode = (node) => {
-  const parent = node.parentElement;
-  if (!parent) return true;
-
-  const skipTags = new Set([
-    "CODE",
-    "PRE",
-    "SCRIPT",
-    "STYLE",
-    "SVG",
-    "IMG",
-    "NOSCRIPT",
-    "TEXTAREA",
-    "INPUT",
-    "BUTTON",
-    "OPTION",
-  ]);
-
-  if (skipTags.has(parent.tagName)) return true;
-  if (parent.closest("code, pre, script, style, svg")) return true;
-
-  return false;
-};
-
-const isTranslatableText = (text) => {
-  const normalized = normalizeWhitespace(text);
-  if (!normalized || normalized.length < 2) return false;
-
-  const letters =
-    normalized.match(/[A-Za-z\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]/g) || [];
-  return letters.length > 0;
 };
 
 const chunkText = (text, maxLength = 800) => {
@@ -216,12 +175,10 @@ const chunkText = (text, maxLength = 800) => {
   return chunks;
 };
 
-// [성능개선] star/unstar 시 불필요한 전체 캐시 무효화 제거
-// trending/search/readme 캐시는 star 여부와 무관하므로 삭제할 이유 없음
 export const starRepo = async (owner, repo) => {
   const token = getGithubToken();
   if (!token) {
-    console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
+    console.error("GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
   }
 
@@ -233,11 +190,11 @@ export const starRepo = async (owner, repo) => {
 
     if (response.status === 204 || response.ok) return true;
 
-    const data = await response.json().catch(() => ({}));
-    console.error(`❌ Star 실패: ${response.status}`, data);
+    // [보안 수정] 상세 API 에러 메시지를 사용자에게 노출하지 않음
+    console.error(`Star 실패: ${response.status}`);
     return false;
   } catch (error) {
-    console.error("❌ Star 중 에러:", error);
+    console.error("Star 중 에러:", error.message);
     return false;
   }
 };
@@ -245,7 +202,7 @@ export const starRepo = async (owner, repo) => {
 export const unstarRepo = async (owner, repo) => {
   const token = getGithubToken();
   if (!token) {
-    console.error("❌ GitHub 토큰이 없습니다. 로그인해주세요.");
+    console.error("GitHub 토큰이 없습니다. 로그인해주세요.");
     return false;
   }
 
@@ -257,11 +214,10 @@ export const unstarRepo = async (owner, repo) => {
 
     if (response.status === 204 || response.ok) return true;
 
-    const data = await response.json().catch(() => ({}));
-    console.error(`❌ Unstar 실패: ${response.status}`, data);
+    console.error(`Unstar 실패: ${response.status}`);
     return false;
   } catch (error) {
-    console.error("❌ Unstar 중 에러:", error);
+    console.error("Unstar 중 에러:", error.message);
     return false;
   }
 };
@@ -280,9 +236,11 @@ export const getTrendingRepos = async (page = 1) => {
       const data = await response.json();
 
       if (!response.ok || data.message) {
+        // [보안 수정] API 레이트 리밋 등 상세 메시지를 노출하지 않음
+        console.error("GitHub API 오류:", response.status);
         return {
           error: true,
-          message: data.message || `HTTP Error: ${response.status}`,
+          message: "GitHub API 요청에 실패했습니다. 잠시 후 다시 시도해주세요.",
         };
       }
 
@@ -309,7 +267,8 @@ export const searchRepos = async (keyword) => {
       const data = await response.json();
 
       if (!response.ok || data.message) {
-        console.error("검색 실패:", data.message || response.status);
+        // [보안 수정] 상세 에러 메시지 노출 차단
+        console.error("검색 실패:", response.status);
         return [];
       }
 
@@ -381,13 +340,15 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
         for (const path of paths) {
           const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
           try {
-            const { response, data } = await fetchGithubJsonWithPublicFallback(
-              url,
-            );
+            const { response, data } =
+              await fetchGithubJsonWithPublicFallback(url);
             if (!response.ok) continue;
             if (!data) continue;
 
-            if (typeof data.content === "string" && data.encoding === "base64") {
+            if (
+              typeof data.content === "string" &&
+              data.encoding === "base64"
+            ) {
               const decoded = decodeBase64Utf8(data.content);
               if (decoded) return decoded;
             }
@@ -446,14 +407,13 @@ export const getRenderedReadmeHtml = async (
         });
 
         if (!response.ok) {
-          const errorText = await response.text().catch(() => "");
-          console.error("README HTML 렌더링 실패:", response.status, errorText);
+          console.error("README HTML 렌더링 실패:", response.status);
           return "";
         }
 
         return response.text();
       } catch (error) {
-        console.error("README HTML 렌더링 에러:", error);
+        console.error("README HTML 렌더링 에러:", error.message);
         return "";
       }
     },
@@ -494,8 +454,6 @@ export const translateToKorean = async (text) => {
   return translated.join("\n\n").trim();
 };
 
-// [성능개선] 번역 API 호출을 직렬 → Promise.all 병렬 처리
-// cachedRequest의 inflightRequests가 중복 요청을 막으므로 안전
 export const getTranslatedRenderedReadmeHtml = async (
   owner,
   repo,
@@ -516,14 +474,43 @@ export const getTranslatedRenderedReadmeHtml = async (
           NodeFilter.SHOW_TEXT,
         );
 
+        const skipTags = new Set([
+          "CODE",
+          "PRE",
+          "SCRIPT",
+          "STYLE",
+          "SVG",
+          "IMG",
+          "NOSCRIPT",
+          "TEXTAREA",
+          "INPUT",
+          "BUTTON",
+          "OPTION",
+        ]);
+
+        const shouldSkip = (node) => {
+          const parent = node.parentElement;
+          if (!parent) return true;
+          if (skipTags.has(parent.tagName)) return true;
+          if (parent.closest("code, pre, script, style, svg")) return true;
+          return false;
+        };
+
+        const isTranslatable = (text) => {
+          const n = normalizeWhitespace(text);
+          if (!n || n.length < 2) return false;
+          const letters =
+            n.match(/[A-Za-z\u00C0-\u024F\u4E00-\u9FFF\u3040-\u30FF]/g) || [];
+          return letters.length > 0;
+        };
+
         const textNodes = [];
         let currentNode = walker.nextNode();
-
         while (currentNode) {
           if (
             currentNode.nodeType === Node.TEXT_NODE &&
-            !shouldSkipTranslationNode(currentNode) &&
-            isTranslatableText(currentNode.nodeValue)
+            !shouldSkip(currentNode) &&
+            isTranslatable(currentNode.nodeValue)
           ) {
             textNodes.push(currentNode);
           }
@@ -538,7 +525,6 @@ export const getTranslatedRenderedReadmeHtml = async (
           ),
         ];
 
-        // [성능개선] 직렬 for-await → Promise.all 병렬 처리
         const pairs = await Promise.all(
           uniqueTexts.map(async (originalText) => {
             const translated = await getTranslatedText(originalText, target);
@@ -550,23 +536,15 @@ export const getTranslatedRenderedReadmeHtml = async (
         textNodes.forEach((node) => {
           const originalText = normalizeWhitespace(node.nodeValue);
           if (!originalText) return;
-
           const translated = translationMap.get(originalText);
           if (translated) {
-            node.nodeValue = node.nodeValue.replace(
-              decodeHtmlEntities(originalText),
-              translated,
-            );
-
-            if (normalizeWhitespace(node.nodeValue) === originalText) {
-              node.nodeValue = translated;
-            }
+            node.nodeValue = translated;
           }
         });
 
         return domDoc.body.innerHTML || "";
       } catch (error) {
-        console.error("README HTML 번역 에러:", error);
+        console.error("README HTML 번역 에러:", error.message);
         return "";
       }
     },
@@ -586,7 +564,7 @@ export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
       const markdownImgRegex =
         /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
       const htmlImgRegex =
-        /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)["']/i;
+        /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
 
       const mdMatch = text.match(markdownImgRegex);
       const htmlMatch = text.match(htmlImgRegex);

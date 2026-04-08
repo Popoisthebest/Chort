@@ -1,34 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!--
+    [보안 수정] 인증이 필요한 페이지(/saved, /profile, /login)를 sitemap에서 제거
+    - 검색 엔진이 로그인 필요 페이지를 크롤링하면 /login으로 리디렉트되어 SEO 혼선 발생
+    - /login 페이지는 색인될 필요가 없으며, 개인화 페이지는 공개 색인 대상이 아님
+  -->
   <url>
     <loc>https://chort.kro.kr/</loc>
-    <lastmod>2026-04-07</lastmod>
+    <lastmod>2026-04-08</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://chort.kro.kr/explore</loc>
-    <lastmod>2026-04-07</lastmod>
+    <lastmod>2026-04-08</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
-  <url>
-    <loc>https://chort.kro.kr/saved</loc>
-    <lastmod>2026-04-07</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.5</priority>
-  </url>
-  <url>
-    <loc>https://chort.kro.kr/profile</loc>
-    <lastmod>2026-04-07</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.3</priority>
-  </url>
-  <url>
-    <loc>https://chort.kro.kr/login</loc>
-    <lastmod>2026-04-07</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.4</priority>
-  </url>
 </urlset>
-

@@ -9,7 +9,6 @@ import {
 import {
   getFirestore,
   collection,
-  addDoc,
   query,
   getDocs,
   deleteDoc,
@@ -42,7 +41,10 @@ export const db = dbInstance;
 const githubProvider = new GithubAuthProvider();
 githubProvider.addScope("public_repo");
 
-const GITHUB_TOKEN_KEY = "github_token";
+// [보안 수정] GitHub Token을 sessionStorage 대신 메모리(클로저)에만 보관
+// sessionStorage는 XSS 공격으로 탈취 가능하므로 제거
+let _githubTokenInMemory = null;
+
 const GITHUB_PROFILE_KEY = "github_profile";
 const COMMENT_COUNT_CACHE_PREFIX = "chort_comment_count:";
 const COMMENT_COUNT_TTL = 1000 * 60 * 2;
@@ -263,8 +265,10 @@ export const loginWithGithub = async () => {
     const result = await signInWithPopup(auth, githubProvider);
     const credential = GithubAuthProvider.credentialFromResult(result);
 
+    // [보안 수정] 토큰을 메모리에만 저장 (sessionStorage 제거)
+    // 페이지 새로고침 시 토큰이 사라지지만, 보안을 위해 허용되는 트레이드오프
     if (credential?.accessToken) {
-      sessionStorage.setItem(GITHUB_TOKEN_KEY, credential.accessToken);
+      _githubTokenInMemory = credential.accessToken;
     }
 
     const githubProfile = getGithubProfileFromLoginResult(result);
@@ -272,7 +276,8 @@ export const loginWithGithub = async () => {
 
     return result.user;
   } catch (error) {
-    console.error("로그인 에러:", error);
+    // [보안 수정] 상세 에러 메시지를 사용자에게 노출하지 않음
+    console.error("로그인 에러:", error.code || "unknown");
     return null;
   }
 };
@@ -280,15 +285,17 @@ export const loginWithGithub = async () => {
 export const logoutUser = async () => {
   try {
     await signOut(auth);
-    sessionStorage.removeItem(GITHUB_TOKEN_KEY);
+    // [보안 수정] 메모리 토큰 초기화
+    _githubTokenInMemory = null;
     sessionStorage.removeItem(GITHUB_PROFILE_KEY);
   } catch (error) {
-    console.error("로그아웃 에러:", error);
+    console.error("로그아웃 에러:", error.code || "unknown");
   }
 };
 
+// [보안 수정] 메모리에서 토큰 반환 (sessionStorage 미사용)
 export const getGithubToken = () => {
-  return sessionStorage.getItem(GITHUB_TOKEN_KEY);
+  return _githubTokenInMemory;
 };
 
 export const getComments = async (repoId) => {
@@ -321,7 +328,7 @@ export const getComments = async (repoId) => {
 
     return comments;
   } catch (error) {
-    console.error("댓글 조회 에러:", error);
+    console.error("댓글 조회 에러:", error.code || "unknown");
     return [];
   }
 };
@@ -361,7 +368,7 @@ export const addComment = async (repoId, text, user, clientRequestId) => {
     invalidateCommentCountCache(repoId);
     return { id: commentRef.id };
   } catch (error) {
-    console.error("댓글 추가 에러:", error);
+    console.error("댓글 추가 에러:", error.code || "unknown");
     return null;
   }
 };
@@ -370,11 +377,27 @@ export const deleteComment = async (commentId) => {
   try {
     const commentRef = doc(db, "comments", commentId);
     const commentSnap = await getDoc(commentRef);
-    const repoId = commentSnap.exists() ? commentSnap.data()?.repoId : null;
+
+    if (!commentSnap.exists()) return false;
+
+    // [보안 수정] 클라이언트에서도 소유자 검증 (Firestore 규칙과 이중 방어)
+    const currentUser = auth.currentUser;
+    if (!currentUser || commentSnap.data()?.userId !== currentUser.uid) {
+      console.error("댓글 삭제 권한이 없습니다.");
+      return false;
+    }
+
+    const repoId = commentSnap.data()?.repoId || null;
 
     const repliesRef = collection(db, "comments", commentId, "replies");
     const repliesSnapshot = await getDocs(repliesRef);
 
+    // [보안 수정] 대댓글 삭제 시 각 대댓글의 소유자만 본인 것만 삭제 가능
+    // 댓글 소유자가 타인의 대댓글을 삭제하는 경우를 방지
+    // → 댓글 삭제는 대댓글이 없을 때만 허용하거나,
+    //   Cloud Functions로 cascade delete를 처리하는 것이 권장됨
+    // 현재 구현: Firestore 서버 규칙이 최종 방어선이므로
+    //           자신의 대댓글만 삭제되며, 타인 것은 규칙에서 거부됨
     const deleteJobs = repliesSnapshot.docs.map((replyDoc) =>
       deleteDoc(doc(db, "comments", commentId, "replies", replyDoc.id)),
     );
@@ -388,7 +411,7 @@ export const deleteComment = async (commentId) => {
 
     return true;
   } catch (error) {
-    console.error("댓글 삭제 에러:", error);
+    console.error("댓글 삭제 에러:", error.code || "unknown");
     return false;
   }
 };
@@ -433,7 +456,7 @@ export const addReply = async (commentId, text, user, clientRequestId) => {
 
     return { id: replyRef.id };
   } catch (error) {
-    console.error("답글 저장 에러:", error);
+    console.error("답글 저장 에러:", error.code || "unknown");
     return null;
   }
 };
@@ -458,15 +481,26 @@ export const getReplies = async (commentId) => {
       })
       .sort(sortByCreatedAtAsc);
   } catch (error) {
-    console.error("답글 로드 에러:", error);
+    console.error("답글 로드 에러:", error.code || "unknown");
     return [];
   }
 };
 
+// [보안 수정] 대댓글 삭제 시 소유자 검증 추가
 export const deleteReply = async (commentId, replyId) => {
   try {
     const commentRef = doc(db, "comments", commentId);
     const replyRef = doc(db, "comments", commentId, "replies", replyId);
+
+    // 삭제 전 대댓글 소유자 확인
+    const replySnap = await getDoc(replyRef);
+    if (!replySnap.exists()) return false;
+
+    const currentUser = auth.currentUser;
+    if (!currentUser || replySnap.data()?.userId !== currentUser.uid) {
+      console.error("대댓글 삭제 권한이 없습니다.");
+      return false;
+    }
 
     const repoId = await runTransaction(db, async (transaction) => {
       const [commentSnap] = await Promise.all([
@@ -494,7 +528,7 @@ export const deleteReply = async (commentId, replyId) => {
 
     return true;
   } catch (error) {
-    console.error("답글 삭제 에러:", error);
+    console.error("답글 삭제 에러:", error.code || "unknown");
     return false;
   }
 };
