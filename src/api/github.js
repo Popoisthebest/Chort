@@ -194,7 +194,7 @@ export const starRepo = async (owner, repo) => {
     console.error(`Star 실패: ${response.status}`);
     return false;
   } catch (error) {
-    console.error("Star 중 에러:", error.message);
+    console.error("Star 중 에러:", error.code || "unknown");
     return false;
   }
 };
@@ -217,7 +217,7 @@ export const unstarRepo = async (owner, repo) => {
     console.error(`Unstar 실패: ${response.status}`);
     return false;
   } catch (error) {
-    console.error("Unstar 중 에러:", error.message);
+    console.error("Unstar 중 에러:", error.code || "unknown");
     return false;
   }
 };
