@@ -17,6 +17,7 @@ export default function Feed() {
   const [commentCounts, setCommentCounts] = useState({});
 
   const loaderRef = useRef(null);
+  const feedScrollRef = useRef(null);
 
   useEffect(() => {
     const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
@@ -121,15 +122,34 @@ export default function Feed() {
     alert("링크가 복사되었습니다! 🚀");
   };
 
+  const goToNextRepo = useCallback(() => {
+    if (!currentRepo || repos.length === 0 || !feedScrollRef.current) return;
+
+    const currentIndex = repos.findIndex((repo) => repo.id === currentRepo.id);
+    if (currentIndex < 0) return;
+
+    const nextIndex = currentIndex + 1;
+    if (nextIndex >= repos.length) return;
+
+    const nextElement = feedScrollRef.current.querySelector(
+      `[data-feed-index="${nextIndex}"]`,
+    );
+    nextElement?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [currentRepo, repos]);
+
   const isStarred = currentRepo ? !!starredRepoIds[currentRepo.id] : false;
   const commentCount = currentRepo ? commentCounts[currentRepo.id] || 0 : 0;
 
   return (
     <div className="relative flex w-full h-full bg-black gap-0">
-      <div className="flex-1 flex justify-center">
-        <div className="w-full h-full max-w-[500px] overflow-y-scroll snap-y snap-mandatory border-r border-gray-800">
+      <div className="flex-1 flex justify-center" onClick={goToNextRepo}>
+        <div
+          ref={feedScrollRef}
+          className="w-full h-full max-w-[500px] overflow-y-scroll snap-y snap-mandatory border-r border-gray-800"
+          onClick={(e) => e.stopPropagation()}
+        >
           {repos.map((repo, index) => (
-            <div key={`${repo.id}-${index}`}>
+            <div key={`${repo.id}-${index}`} data-feed-index={index}>
               <ChortCard
                 repo={repo}
                 onVisible={setCurrentRepo}
