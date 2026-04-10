@@ -39,7 +39,9 @@ export const useFeed = () => {
         pageRef.current += PAGES_PER_BATCH;
         round += 1;
 
-        const validResults = results.filter((r) => Array.isArray(r) && !r?.error);
+        const validResults = results.filter(
+          (r) => Array.isArray(r) && !r?.error,
+        );
         if (validResults.length > 0) {
           sawApiData = true;
           merged = [...merged, ...validResults.flat()];
