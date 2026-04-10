@@ -66,12 +66,12 @@ const getTranslatedText = async (text, target = "ko") => {
   try {
     const response = await fetch(
       `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(
-        normalized
-      )}`
+        normalized,
+      )}`,
     );
     const data = await response.json();
     const result = normalizeWhitespace(
-      data?.[0]?.map((item) => item[0]).join("") || normalized
+      data?.[0]?.map((item) => item[0]).join("") || normalized,
     );
 
     translationCache.set(cacheKey, result);
@@ -85,13 +85,13 @@ const getTranslatedText = async (text, target = "ko") => {
 const translateToKorean = async (text) => {
   if (!text) return "";
   const chunks = chunkText(text, 800);
-  
+
   const translatedChunks = [];
   for (const chunk of chunks) {
     // 429 Too Many Requests 방지를 위해 Promise.all 대신 순차 호출 및 딜레이 적용
     const translated = await getTranslatedText(chunk, "ko");
     translatedChunks.push(translated);
-    await delay(300); 
+    await delay(300);
   }
   return translatedChunks.join("\n\n").trim();
 };
@@ -99,26 +99,19 @@ const translateToKorean = async (text) => {
 // 4. README 파싱 및 정제
 const cleanReadmeText = (text) => {
   if (!text) return "";
-  
+
   let cleaned = String(text);
 
-  const replaceRules = [
-    cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
-    { pattern: /<picture[\s\S]*?<\/picture>/gi, replacement: "" },
-    { pattern: /<script[\s\S]*?<\/script>/gi, replacement: "" },
-    { pattern: /<style[\s\S]*?<\/style>/gi, replacement: "" },
-    { pattern: /!\[.*?\]\(.*?\)/g, replacement: "" },
-    { pattern: /<img[^>]*>/gi, replacement: "" },
-    { pattern: /\[([^\]]+)\]\((.*?)\)/g, replacement: "$1" },
-    { pattern: /<\/?[^>]+>/g, replacement: "" },
-    { pattern: /^\s*[-|:]{3,}\s*$/gm, replacement: "" },
-    { pattern: /\n{3,}/g, replacement: "\n\n" }
-  ];
-
-  for (const rule of replaceRules) {
-    cleaned = cleaned.replace(rule.pattern, rule.replacement);
-  }
-  
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
+  cleaned = cleaned.replace(/<picture[\s\S]*?<\/picture>/gi, "");
+  cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, "");
+  cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, "");
+  cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, "");
+  cleaned = cleaned.replace(/<img[^>]*>/gi, "");
+  cleaned = cleaned.replace(/\[([^\]]+)\]\((.*?)\)/g, "$1");
+  cleaned = cleaned.replace(/<\/?[^>]+>/g, "");
+  cleaned = cleaned.replace(/^\s*[-|:]{3,}\s*$/gm, "");
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
   cleaned = cleaned.trim();
 
   const lines = cleaned
@@ -127,20 +120,19 @@ const cleanReadmeText = (text) => {
     .filter(Boolean)
     .filter(
       (line) =>
-        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(line)
+        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(
+          line,
+        ),
     )
     .slice(0, 8);
 
-  let result = lines.join("\n");
-  
-  const codeBlockCount = (result.match(/```/g) || []).length;
-  if (codeBlockCount % 2 !== 0) result += "\n```";
-
-  return result.trim();
+  return lines.join("\n").trim();
 };
 
 const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
-  const branches = [...new Set([defaultBranch, "main", "master"].filter(Boolean))];
+  const branches = [
+    ...new Set([defaultBranch, "main", "master"].filter(Boolean)),
+  ];
   for (const branch of branches) {
     const readmeApiUrl = `https://api.github.com/repos/${owner}/${repo}/readme?ref=${encodeURIComponent(branch)}`;
     try {
@@ -151,15 +143,19 @@ const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
           return decodeBase64Utf8(data.content);
         }
       }
-    } catch (e) { /* 무시 */ }
+    } catch (e) {
+      /* 무시 */
+    }
   }
   return "";
 };
 
 const extractReadmeImage = (text, owner, repo, branch = "main") => {
   if (!text) return null;
-  const markdownImgRegex = /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
-  const htmlImgRegex = /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
+  const markdownImgRegex =
+    /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
+  const htmlImgRegex =
+    /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
 
   const mdMatch = text.match(markdownImgRegex);
   const htmlMatch = text.match(htmlImgRegex);
@@ -176,7 +172,7 @@ const extractReadmeImage = (text, owner, repo, branch = "main") => {
 // 5. 메인 파이프라인
 const runPipeline = async () => {
   console.log("🚀 GitHub Trending Fetch & Process 시작...");
-  
+
   const date = new Date();
   date.setDate(date.getDate() - 7);
   const formattedDate = date.toISOString().split("T")[0];
@@ -186,10 +182,10 @@ const runPipeline = async () => {
   try {
     const searchRes = await fetch(searchUrl, { headers: getHeaders() });
     if (!searchRes.ok) throw new Error(`GitHub 검색 실패: ${searchRes.status}`);
-    
+
     const searchData = await searchRes.json();
     const repos = searchData.items || [];
-    
+
     console.log(`📌 총 ${repos.length}개의 레포지토리를 처리합니다.`);
     const batch = db.batch();
 
@@ -202,9 +198,18 @@ const runPipeline = async () => {
       const descKo = await translateToKorean(repo.description || "");
 
       // 2) README 텍스트 및 이미지 추출
-      const rawReadme = await getReadmeRaw(owner, repoName, repo.default_branch);
-      const thumbnail = extractReadmeImage(rawReadme, owner, repoName, repo.default_branch);
-      
+      const rawReadme = await getReadmeRaw(
+        owner,
+        repoName,
+        repo.default_branch,
+      );
+      const thumbnail = extractReadmeImage(
+        rawReadme,
+        owner,
+        repoName,
+        repo.default_branch,
+      );
+
       // 3) 요약 및 번역 (Google API)
       const summaryEn = cleanReadmeText(rawReadme);
       const summaryKo = await translateToKorean(summaryEn);
@@ -228,14 +233,13 @@ const runPipeline = async () => {
 
       const docRef = db.collection("feed_cards").doc(cardData.repoId);
       batch.set(docRef, cardData, { merge: true });
-      
+
       console.log(`✅ 완료: ${owner}/${repoName}`);
       await delay(1000); // 다음 레포지토리 처리 전 안전 딜레이
     }
 
     await batch.commit();
     console.log(`\n🎉 모든 데이터가 성공적으로 Firestore에 적재되었습니다.`);
-    
   } catch (error) {
     console.error("❌ 파이프라인 실행 중 오류 발생:", error);
     process.exit(1);
