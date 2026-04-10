@@ -1,0 +1,29 @@
+name: Update Trending Feed Pipeline
+
+on:
+  schedule:
+    - cron: "0 */3 * * *" # 3시간마다 실행 (UTC 기준)
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  update-feed:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20" # 기본 내장 fetch API 사용을 위해 Node 20 사용
+
+      - name: 📦 Install dependencies
+        # 프로젝트 루트에 firebase-admin이 없다면 즉석에서 설치
+        run: npm install firebase-admin
+
+      - name: 🚀 Run Cron Script
+        run: node scripts/update-firestore.js
+        env:
+          # Settings > Secrets and variables > Actions에 등록된 키들
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }} # (선택) GitHub API Rate Limit 확장을 위해 등록 권장
