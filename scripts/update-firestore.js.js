@@ -71,18 +71,19 @@ const translateViaMyMemory = async (text, target = "ko") => {
 // 4. README 파싱 및 정제 (클라이언트 로직 이식)
 const cleanReadmeText = (text) => {
   if (!text) return "";
-  let cleaned = text
-    .replace(//g, "")
-    .replace(/<picture[\s\S]*?<\/picture>/gi, "")
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/!\[.*?\]\(.*?\)/g, "")
-    .replace(/<img[^>]*>/gi, "")
-    .replace(/\[([^\]]+)\]\((.*?)\)/g, "$1")
-    .replace(/<\/?[^>]+>/g, "")
-    .replace(/^\s*[-|:]{3,}\s*$/gm, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  
+  let cleaned = String(text);
+  cleaned = cleaned.replace(//g, "");
+  cleaned = cleaned.replace(/<picture[\s\S]*?<\/picture>/gi, "");
+  cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, "");
+  cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, "");
+  cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, "");
+  cleaned = cleaned.replace(/<img[^>]*>/gi, "");
+  cleaned = cleaned.replace(/\[([^\]]+)\]\((.*?)\)/g, "$1");
+  cleaned = cleaned.replace(/<\/?[^>]+>/g, "");
+  cleaned = cleaned.replace(/^\s*[-|:]{3,}\s*$/gm, "");
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+  cleaned = cleaned.trim();
 
   const lines = cleaned
     .split("\n")
