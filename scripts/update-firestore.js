@@ -13,7 +13,7 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
-// 2. GitHub API 헤더 설정 (GH_TOKEN이 있으면 사용)
+// 2. GitHub API 헤더 설정
 const getHeaders = (accept = "application/vnd.github+json") => {
   const headers = { Accept: accept };
   if (process.env.GH_TOKEN) {
@@ -22,10 +22,9 @@ const getHeaders = (accept = "application/vnd.github+json") => {
   return headers;
 };
 
-// 유틸리티: 딜레이 함수 (API Rate Limit 방지)
+// 유틸리티 함수들
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// 유틸리티: Node.js용 Base64 디코딩
 const decodeBase64Utf8 = (value) => {
   if (!value || typeof value !== "string") return "";
   try {
@@ -44,45 +43,82 @@ const normalizeWhitespace = (text) => {
     .trim();
 };
 
-// 3. 번역 API (MyMemory)
-const translateViaMyMemory = async (text, target = "ko") => {
+const chunkText = (text, maxLength = 800) => {
+  const chunks = [];
+  for (let i = 0; i < text.length; i += maxLength) {
+    chunks.push(text.substring(i, i + maxLength));
+  }
+  return chunks;
+};
+
+// 3. 구글 번역 API 로직 (MyMemory 대체)
+const translationCache = new Map(); // 스크립트 실행 중 중복 번역 방지용 캐시
+
+const getTranslatedText = async (text, target = "ko") => {
   const normalized = normalizeWhitespace(text);
   if (!normalized) return "";
 
+  const cacheKey = `translate:${target}:${normalized}`;
+  if (translationCache.has(cacheKey)) {
+    return translationCache.get(cacheKey);
+  }
+
   try {
-    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
-      normalized,
-    )}&langpair=auto|${target}`;
-
-    const response = await fetch(url);
-    if (!response.ok) return normalized;
-
+    const response = await fetch(
+      `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(
+        normalized
+      )}`
+    );
     const data = await response.json();
-    const translated = data?.responseData?.translatedText;
+    const result = normalizeWhitespace(
+      data?.[0]?.map((item) => item[0]).join("") || normalized
+    );
 
-    if (!translated || translated === normalized) return normalized;
-    return normalizeWhitespace(translated);
+    translationCache.set(cacheKey, result);
+    return result;
   } catch (error) {
-    console.error("번역 에러:", error.message);
+    console.error("번역 에러:", error);
     return normalized;
   }
 };
 
-// 4. README 파싱 및 정제 (클라이언트 로직 이식)
+const translateToKorean = async (text) => {
+  if (!text) return "";
+  const chunks = chunkText(text, 800);
+  
+  const translatedChunks = [];
+  for (const chunk of chunks) {
+    // 429 Too Many Requests 방지를 위해 Promise.all 대신 순차 호출 및 딜레이 적용
+    const translated = await getTranslatedText(chunk, "ko");
+    translatedChunks.push(translated);
+    await delay(300); 
+  }
+  return translatedChunks.join("\n\n").trim();
+};
+
+// 4. README 파싱 및 정제
 const cleanReadmeText = (text) => {
   if (!text) return "";
-
+  
   let cleaned = String(text);
-  cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
-  cleaned = cleaned.replace(/<picture[\s\S]*?<\/picture>/gi, "");
-  cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, "");
-  cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, "");
-  cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, "");
-  cleaned = cleaned.replace(/<img[^>]*>/gi, "");
-  cleaned = cleaned.replace(/\[([^\]]+)\]\((.*?)\)/g, "$1");
-  cleaned = cleaned.replace(/<\/?[^>]+>/g, "");
-  cleaned = cleaned.replace(/^\s*[-|:]{3,}\s*$/gm, "");
-  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+
+  const replaceRules = [
+    cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
+    { pattern: /<picture[\s\S]*?<\/picture>/gi, replacement: "" },
+    { pattern: /<script[\s\S]*?<\/script>/gi, replacement: "" },
+    { pattern: /<style[\s\S]*?<\/style>/gi, replacement: "" },
+    { pattern: /!\[.*?\]\(.*?\)/g, replacement: "" },
+    { pattern: /<img[^>]*>/gi, replacement: "" },
+    { pattern: /\[([^\]]+)\]\((.*?)\)/g, replacement: "$1" },
+    { pattern: /<\/?[^>]+>/g, replacement: "" },
+    { pattern: /^\s*[-|:]{3,}\s*$/gm, replacement: "" },
+    { pattern: /\n{3,}/g, replacement: "\n\n" }
+  ];
+
+  for (const rule of replaceRules) {
+    cleaned = cleaned.replace(rule.pattern, rule.replacement);
+  }
+  
   cleaned = cleaned.trim();
 
   const lines = cleaned
@@ -91,13 +127,12 @@ const cleanReadmeText = (text) => {
     .filter(Boolean)
     .filter(
       (line) =>
-        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(
-          line,
-        ),
+        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(line)
     )
-    .slice(0, 8); // 상위 8줄만 추출
+    .slice(0, 8);
 
   let result = lines.join("\n");
+  
   const codeBlockCount = (result.match(/```/g) || []).length;
   if (codeBlockCount % 2 !== 0) result += "\n```";
 
@@ -105,11 +140,7 @@ const cleanReadmeText = (text) => {
 };
 
 const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
-  const branches = [
-    ...new Set([defaultBranch, "main", "master"].filter(Boolean)),
-  ];
-  const paths = ["README.md", "readme.md", "README.MD", "Readme.md"];
-
+  const branches = [...new Set([defaultBranch, "main", "master"].filter(Boolean))];
   for (const branch of branches) {
     const readmeApiUrl = `https://api.github.com/repos/${owner}/${repo}/readme?ref=${encodeURIComponent(branch)}`;
     try {
@@ -120,19 +151,15 @@ const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
           return decodeBase64Utf8(data.content);
         }
       }
-    } catch (e) {
-      /* 무시하고 다음 후보 진행 */
-    }
+    } catch (e) { /* 무시 */ }
   }
   return "";
 };
 
 const extractReadmeImage = (text, owner, repo, branch = "main") => {
   if (!text) return null;
-  const markdownImgRegex =
-    /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
-  const htmlImgRegex =
-    /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
+  const markdownImgRegex = /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
+  const htmlImgRegex = /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
 
   const mdMatch = text.match(markdownImgRegex);
   const htmlMatch = text.match(htmlImgRegex);
@@ -149,23 +176,21 @@ const extractReadmeImage = (text, owner, repo, branch = "main") => {
 // 5. 메인 파이프라인
 const runPipeline = async () => {
   console.log("🚀 GitHub Trending Fetch & Process 시작...");
-
-  // 최근 7일 생성된 레포지토리 중 별이 많은 순
+  
   const date = new Date();
   date.setDate(date.getDate() - 7);
   const formattedDate = date.toISOString().split("T")[0];
   const q = `created:>${formattedDate}`;
-  const searchUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=15`; // 15개 크롤링
+  const searchUrl = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=15`;
 
   try {
     const searchRes = await fetch(searchUrl, { headers: getHeaders() });
     if (!searchRes.ok) throw new Error(`GitHub 검색 실패: ${searchRes.status}`);
-
+    
     const searchData = await searchRes.json();
     const repos = searchData.items || [];
-
+    
     console.log(`📌 총 ${repos.length}개의 레포지토리를 처리합니다.`);
-
     const batch = db.batch();
 
     for (const repo of repos) {
@@ -173,32 +198,16 @@ const runPipeline = async () => {
       const repoName = repo.name;
       console.log(`\n⏳ 처리 중: ${owner}/${repoName}`);
 
-      // 1) 설명 번역
-      const descKo = await translateViaMyMemory(repo.description || "");
-      await delay(500); // MyMemory API 과부하 방지
+      // 1) 설명 번역 (Google API)
+      const descKo = await translateToKorean(repo.description || "");
 
       // 2) README 텍스트 및 이미지 추출
-      const rawReadme = await getReadmeRaw(
-        owner,
-        repoName,
-        repo.default_branch,
-      );
-      const thumbnail = extractReadmeImage(
-        rawReadme,
-        owner,
-        repoName,
-        repo.default_branch,
-      );
-
-      // 3) 요약 및 번역
+      const rawReadme = await getReadmeRaw(owner, repoName, repo.default_branch);
+      const thumbnail = extractReadmeImage(rawReadme, owner, repoName, repo.default_branch);
+      
+      // 3) 요약 및 번역 (Google API)
       const summaryEn = cleanReadmeText(rawReadme);
-      let summaryKo = "";
-      if (summaryEn) {
-        // 긴 요약문 처리 (단순화를 위해 800자 이하로 자르고 번역)
-        const chunk = summaryEn.substring(0, 800);
-        summaryKo = await translateViaMyMemory(chunk);
-        await delay(500); // 딜레이
-      }
+      const summaryKo = await translateToKorean(summaryEn);
 
       // 4) Firestore 적재 데이터 구성
       const cardData = {
@@ -217,16 +226,16 @@ const runPipeline = async () => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       };
 
-      // Firestore Batch Set (문서 ID를 repoId로 사용하여 자동 덮어쓰기)
       const docRef = db.collection("feed_cards").doc(cardData.repoId);
       batch.set(docRef, cardData, { merge: true });
-
+      
       console.log(`✅ 완료: ${owner}/${repoName}`);
+      await delay(1000); // 다음 레포지토리 처리 전 안전 딜레이
     }
 
-    // 5) Firestore에 일괄 저장
     await batch.commit();
     console.log(`\n🎉 모든 데이터가 성공적으로 Firestore에 적재되었습니다.`);
+    
   } catch (error) {
     console.error("❌ 파이프라인 실행 중 오류 발생:", error);
     process.exit(1);
