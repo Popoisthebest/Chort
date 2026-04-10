@@ -51,9 +51,9 @@ const translateViaMyMemory = async (text, target = "ko") => {
 
   try {
     const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
-      normalized
+      normalized,
     )}&langpair=auto|${target}`;
-    
+
     const response = await fetch(url);
     if (!response.ok) return normalized;
 
@@ -71,9 +71,9 @@ const translateViaMyMemory = async (text, target = "ko") => {
 // 4. README 파싱 및 정제 (클라이언트 로직 이식)
 const cleanReadmeText = (text) => {
   if (!text) return "";
-  
+
   let cleaned = String(text);
-  cleaned = cleaned.replace(//g, "");
+  cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
   cleaned = cleaned.replace(/<picture[\s\S]*?<\/picture>/gi, "");
   cleaned = cleaned.replace(/<script[\s\S]*?<\/script>/gi, "");
   cleaned = cleaned.replace(/<style[\s\S]*?<\/style>/gi, "");
@@ -91,7 +91,9 @@ const cleanReadmeText = (text) => {
     .filter(Boolean)
     .filter(
       (line) =>
-        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(line)
+        !/^(english|한국어|简体中文|繁體中文|japanese|日本語)(\s*[·|/]\s*.*)?$/i.test(
+          line,
+        ),
     )
     .slice(0, 8); // 상위 8줄만 추출
 
@@ -103,7 +105,9 @@ const cleanReadmeText = (text) => {
 };
 
 const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
-  const branches = [...new Set([defaultBranch, "main", "master"].filter(Boolean))];
+  const branches = [
+    ...new Set([defaultBranch, "main", "master"].filter(Boolean)),
+  ];
   const paths = ["README.md", "readme.md", "README.MD", "Readme.md"];
 
   for (const branch of branches) {
@@ -116,15 +120,19 @@ const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
           return decodeBase64Utf8(data.content);
         }
       }
-    } catch (e) { /* 무시하고 다음 후보 진행 */ }
+    } catch (e) {
+      /* 무시하고 다음 후보 진행 */
+    }
   }
   return "";
 };
 
 const extractReadmeImage = (text, owner, repo, branch = "main") => {
   if (!text) return null;
-  const markdownImgRegex = /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
-  const htmlImgRegex = /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
+  const markdownImgRegex =
+    /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
+  const htmlImgRegex =
+    /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
 
   const mdMatch = text.match(markdownImgRegex);
   const htmlMatch = text.match(htmlImgRegex);
@@ -141,7 +149,7 @@ const extractReadmeImage = (text, owner, repo, branch = "main") => {
 // 5. 메인 파이프라인
 const runPipeline = async () => {
   console.log("🚀 GitHub Trending Fetch & Process 시작...");
-  
+
   // 최근 7일 생성된 레포지토리 중 별이 많은 순
   const date = new Date();
   date.setDate(date.getDate() - 7);
@@ -152,10 +160,10 @@ const runPipeline = async () => {
   try {
     const searchRes = await fetch(searchUrl, { headers: getHeaders() });
     if (!searchRes.ok) throw new Error(`GitHub 검색 실패: ${searchRes.status}`);
-    
+
     const searchData = await searchRes.json();
     const repos = searchData.items || [];
-    
+
     console.log(`📌 총 ${repos.length}개의 레포지토리를 처리합니다.`);
 
     const batch = db.batch();
@@ -170,9 +178,18 @@ const runPipeline = async () => {
       await delay(500); // MyMemory API 과부하 방지
 
       // 2) README 텍스트 및 이미지 추출
-      const rawReadme = await getReadmeRaw(owner, repoName, repo.default_branch);
-      const thumbnail = extractReadmeImage(rawReadme, owner, repoName, repo.default_branch);
-      
+      const rawReadme = await getReadmeRaw(
+        owner,
+        repoName,
+        repo.default_branch,
+      );
+      const thumbnail = extractReadmeImage(
+        rawReadme,
+        owner,
+        repoName,
+        repo.default_branch,
+      );
+
       // 3) 요약 및 번역
       const summaryEn = cleanReadmeText(rawReadme);
       let summaryKo = "";
@@ -203,14 +220,13 @@ const runPipeline = async () => {
       // Firestore Batch Set (문서 ID를 repoId로 사용하여 자동 덮어쓰기)
       const docRef = db.collection("feed_cards").doc(cardData.repoId);
       batch.set(docRef, cardData, { merge: true });
-      
+
       console.log(`✅ 완료: ${owner}/${repoName}`);
     }
 
     // 5) Firestore에 일괄 저장
     await batch.commit();
     console.log(`\n🎉 모든 데이터가 성공적으로 Firestore에 적재되었습니다.`);
-    
   } catch (error) {
     console.error("❌ 파이프라인 실행 중 오류 발생:", error);
     process.exit(1);
