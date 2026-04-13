@@ -41,9 +41,82 @@ export const db = dbInstance;
 const githubProvider = new GithubAuthProvider();
 githubProvider.addScope("public_repo");
 
-// [보안 수정] GitHub Token을 sessionStorage 대신 메모리(클로저)에만 보관
-// sessionStorage는 XSS 공격으로 탈취 가능하므로 제거
+// GitHub OAuth access token: 메모리 + localStorage(uid 바인딩)
+// Firebase 세션은 브라우저에 지속되지만, 팝업 로그인 시에만 credential이 오므로
+// 토큰을 uid와 함께 저장해 재방문/새로고침 후에도 Star 등 GitHub API가 동작하게 함
+// (XSS 시 노출 위험은 있으므로 스크립트 주입 방지가 중요)
 let _githubTokenInMemory = null;
+
+const GITHUB_OAUTH_TOKEN_KEY = "chort_github_oauth";
+
+const loadStoredGithubOAuth = () => {
+  try {
+    const raw = localStorage.getItem(GITHUB_OAUTH_TOKEN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.token || !parsed?.uid) return null;
+    return { token: parsed.token, uid: parsed.uid };
+  } catch {
+    return null;
+  }
+};
+
+const persistGithubOAuth = (token, uid) => {
+  _githubTokenInMemory = token;
+  try {
+    localStorage.setItem(
+      GITHUB_OAUTH_TOKEN_KEY,
+      JSON.stringify({ token, uid }),
+    );
+  } catch {
+    // quota 등
+  }
+};
+
+const clearGithubOAuth = () => {
+  _githubTokenInMemory = null;
+  try {
+    localStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+};
+
+const syncGithubTokenForUser = (user) => {
+  if (!user) {
+    clearGithubOAuth();
+    return;
+  }
+
+  const isGithub = user.providerData?.some(
+    (p) => p?.providerId === "github.com",
+  );
+  if (!isGithub) {
+    clearGithubOAuth();
+    return;
+  }
+
+  const stored = loadStoredGithubOAuth();
+  if (stored && stored.uid !== user.uid) {
+    try {
+      localStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
+    } catch {
+      // ignore
+    }
+    _githubTokenInMemory = null;
+  }
+
+  if (!_githubTokenInMemory) {
+    const again = loadStoredGithubOAuth();
+    if (again && again.uid === user.uid) {
+      _githubTokenInMemory = again.token;
+    }
+  }
+};
+
+auth.onAuthStateChanged((user) => {
+  syncGithubTokenForUser(user);
+});
 
 const GITHUB_PROFILE_KEY = "github_profile";
 const COMMENT_COUNT_CACHE_PREFIX = "chort_comment_count:";
@@ -265,10 +338,8 @@ export const loginWithGithub = async () => {
     const result = await signInWithPopup(auth, githubProvider);
     const credential = GithubAuthProvider.credentialFromResult(result);
 
-    // [보안 수정] 토큰을 메모리에만 저장 (sessionStorage 제거)
-    // 페이지 새로고침 시 토큰이 사라지지만, 보안을 위해 허용되는 트레이드오프
-    if (credential?.accessToken) {
-      _githubTokenInMemory = credential.accessToken;
+    if (credential?.accessToken && result.user?.uid) {
+      persistGithubOAuth(credential.accessToken, result.user.uid);
     }
 
     const githubProfile = getGithubProfileFromLoginResult(result);
@@ -285,15 +356,13 @@ export const loginWithGithub = async () => {
 export const logoutUser = async () => {
   try {
     await signOut(auth);
-    // [보안 수정] 메모리 토큰 초기화
-    _githubTokenInMemory = null;
+    clearGithubOAuth();
     sessionStorage.removeItem(GITHUB_PROFILE_KEY);
   } catch (error) {
     console.error("로그아웃 에러:", error.code || "unknown");
   }
 };
 
-// [보안 수정] 메모리에서 토큰 반환 (sessionStorage 미사용)
 export const getGithubToken = () => {
   return _githubTokenInMemory;
 };
