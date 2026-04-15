@@ -14,6 +14,48 @@ import { formatDateTimeKo, formatTimeKo } from "../../utils/formatters";
 const makeClientRequestId = () =>
   `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
+const REPLIES_CACHE_PREFIX = "chort_replies:";
+const REPLIES_CACHE_TTL = 1000 * 60 * 5; // 5 분
+
+const getRepliesCacheKey = (commentId) =>
+  `${REPLIES_CACHE_PREFIX}${commentId}`;
+
+const getCachedReplies = (commentId) => {
+  try {
+    const raw = sessionStorage.getItem(getRepliesCacheKey(commentId));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed?.expiresAt || parsed.expiresAt <= Date.now()) {
+      sessionStorage.removeItem(getRepliesCacheKey(commentId));
+      return null;
+    }
+
+    return parsed.replies;
+  } catch {
+    return null;
+  }
+};
+
+const setCachedReplies = (commentId, replies) => {
+  try {
+    sessionStorage.setItem(getRepliesCacheKey(commentId), JSON.stringify({
+      replies,
+      expiresAt: Date.now() + REPLIES_CACHE_TTL,
+    }));
+  } catch {
+    // ignore quota errors
+  }
+};
+
+const invalidateRepliesCache = (commentId) => {
+  try {
+    sessionStorage.removeItem(getRepliesCacheKey(commentId));
+  } catch {
+    // ignore
+  }
+};
+
 export default function CommentsPanel({ repo, onClose }) {
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
@@ -93,9 +135,17 @@ export default function CommentsPanel({ repo, onClose }) {
   };
 
   const loadReplies = async (commentId) => {
+    // 캐시 확인
+    const cached = getCachedReplies(commentId);
+    if (cached) {
+      setRepliesByCommentId((prev) => ({ ...prev, [commentId]: cached }));
+      return;
+    }
+
     setLoadingReplies((prev) => ({ ...prev, [commentId]: true }));
     const replies = await fetchReplies(commentId);
     setRepliesByCommentId((prev) => ({ ...prev, [commentId]: replies }));
+    setCachedReplies(commentId, replies);
     setLoadingReplies((prev) => ({ ...prev, [commentId]: false }));
   };
 
@@ -137,6 +187,8 @@ export default function CommentsPanel({ repo, onClose }) {
 
       if (result) {
         setReplyTextByCommentId((prev) => ({ ...prev, [commentId]: "" }));
+        // [수정] 대댓글 추가 시 해당 댓글의 캐시 무효화
+        invalidateRepliesCache(commentId);
         await Promise.all([loadReplies(commentId), loadComments()]);
       }
     } finally {
@@ -161,6 +213,8 @@ export default function CommentsPanel({ repo, onClose }) {
 
     const success = await deleteReply(commentId, replyId);
     if (success) {
+      // [수정] 대댓글 삭제 시 해당 댓글의 캐시 무효화
+      invalidateRepliesCache(commentId);
       await Promise.all([loadReplies(commentId), loadComments()]);
     }
   };

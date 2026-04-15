@@ -153,6 +153,20 @@ export default function Explore() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [selectedRepo]);
 
+  const [profileVersion, setProfileVersion] = useState(0);
+
+  // 프로필이 변경될 때마다 버전 업데이트 (localStorage 기반이므로 수동 트리거)
+  useEffect(() => {
+    const handleStorageChange = () => setProfileVersion((v) => v + 1);
+    window.addEventListener("storage", handleStorageChange);
+    // 페이지 포커스 시에도 체크 (다른 탭에서의 변경 반영)
+    window.addEventListener("focus", handleStorageChange);
+    return () => {
+      window.removeEventListener("storage", handleStorageChange);
+      window.removeEventListener("focus", handleStorageChange);
+    };
+  }, []);
+
   const personalizedTopics = useMemo(() => {
     const profile = getProfile();
 
@@ -180,7 +194,7 @@ export default function Explore() {
     }
 
     return unique.slice(0, 12).map(toDisplayTag);
-  }, []);
+  }, [profileVersion]);
 
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
