@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from "react";
+// src/pages/Profile.js
+import React, { useState, useEffect, useContext } from "react";
 import { User, Settings, Trash2, LogOut, Flame } from "lucide-react";
 import { logoutUser } from "../api/firebase";
 import { useNavigate } from "react-router-dom";
+import { LoginModalContext } from "../App";
 
 const STREAK_KEY = "chort_streak";
 
@@ -19,13 +21,8 @@ const calculateStreak = () => {
 
     const diffDays = Math.floor((today - last) / (1000 * 60 * 60 * 24));
 
-    // 오늘 이미 체크인했으면 현재 streak 반환
     if (diffDays === 0) return streak;
-
-    // 어제 방문했으면 streak 유지 (내일 체크인 시 +1)
     if (diffDays === 1) return streak;
-
-    // 2 일 이상 방문하지 않았으면 streak 리셋
     return 0;
   } catch {
     return 0;
@@ -39,11 +36,10 @@ const updateStreak = () => {
     today.setHours(0, 0, 0, 0);
 
     if (!raw) {
-      // 첫 방문
-      localStorage.setItem(STREAK_KEY, JSON.stringify({
-        lastVisit: today.toISOString(),
-        streak: 1,
-      }));
+      localStorage.setItem(
+        STREAK_KEY,
+        JSON.stringify({ lastVisit: today.toISOString(), streak: 1 }),
+      );
       return 1;
     }
 
@@ -53,45 +49,40 @@ const updateStreak = () => {
 
     const diffDays = Math.floor((today - last) / (1000 * 60 * 60 * 24));
 
-    if (diffDays === 0) {
-      // 오늘 이미 체크인
-      return streak;
-    }
+    if (diffDays === 0) return streak;
 
     if (diffDays === 1) {
-      // 연속 방문
       const newStreak = streak + 1;
-      localStorage.setItem(STREAK_KEY, JSON.stringify({
-        lastVisit: today.toISOString(),
-        streak: newStreak,
-      }));
+      localStorage.setItem(
+        STREAK_KEY,
+        JSON.stringify({ lastVisit: today.toISOString(), streak: newStreak }),
+      );
       return newStreak;
     }
 
-    // 2 일 이상 경과 - 리셋
-    localStorage.setItem(STREAK_KEY, JSON.stringify({
-      lastVisit: today.toISOString(),
-      streak: 1,
-    }));
+    localStorage.setItem(
+      STREAK_KEY,
+      JSON.stringify({ lastVisit: today.toISOString(), streak: 1 }),
+    );
     return 1;
   } catch {
     return 1;
   }
 };
 
-export default function Profile({ user }) {
+export default function Profile() {
+  const { user, openLoginModal } = useContext(LoginModalContext);
   const [savedCount, setSavedCount] = useState(0);
   const [streak, setStreak] = useState(0);
   const navigate = useNavigate();
 
-  // 저장된 항목 개수 및 streak 불러오기
   useEffect(() => {
+    if (!user) return;
     const loaded = JSON.parse(localStorage.getItem("chort_saved")) || [];
     setSavedCount(loaded.length);
     setStreak(calculateStreak());
-  }, []);
+  }, [user]);
 
-  // 보관함 초기화 기능
   const clearSaved = () => {
     if (window.confirm("저장된 보관함을 모두 비우시겠습니까?")) {
       localStorage.removeItem("chort_saved");
@@ -100,7 +91,6 @@ export default function Profile({ user }) {
     }
   };
 
-  // Streak 초기화 기능
   const clearStreak = () => {
     if (window.confirm("연속 방문 기록을 초기화하시겠습니까?")) {
       localStorage.removeItem(STREAK_KEY);
@@ -109,13 +99,36 @@ export default function Profile({ user }) {
     }
   };
 
-  // 로그아웃 기능
   const handleLogout = async () => {
     if (window.confirm("로그아웃 하시겠습니까?")) {
       await logoutUser();
-      navigate("/login");
+      navigate("/");
     }
   };
+
+  // 비로그인 상태 안내
+  if (!user) {
+    return (
+      <div className="w-full h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-4 p-6">
+        <div className="w-16 h-16 bg-white/10 rounded-full flex items-center justify-center mb-2">
+          <User className="w-8 h-8 text-gray-500" />
+        </div>
+        <p className="text-gray-400 text-center">
+          프로필을 보려면 로그인이 필요합니다.
+        </p>
+        <button
+          onClick={() =>
+            openLoginModal(
+              "프로필 페이지를 이용하려면 GitHub 로그인이 필요합니다.",
+            )
+          }
+          className="mt-2 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-full transition"
+        >
+          GitHub로 로그인
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
@@ -159,7 +172,9 @@ export default function Profile({ user }) {
           </div>
           <div className="bg-black border border-gray-800 rounded-xl p-4 flex flex-col items-center justify-center">
             <div className="flex items-center gap-1">
-              <Flame className={`w-6 h-6 ${streak > 0 ? "text-orange-500" : "text-gray-600"}`} />
+              <Flame
+                className={`w-6 h-6 ${streak > 0 ? "text-orange-500" : "text-gray-600"}`}
+              />
               <span className="text-2xl font-black text-white">{streak}</span>
             </div>
             <span className="text-xs text-gray-500 mt-1">Streak Days</span>

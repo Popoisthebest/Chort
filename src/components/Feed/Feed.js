@@ -1,15 +1,23 @@
 // src/components/Feed/Feed.js
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, {
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+} from "react";
 import { Star, Share2, Code, MessageCircle } from "lucide-react";
 import ChortCard from "../Card/ChortCard";
 import CommentsPanel from "../Comments/CommentsPanel";
 import { useFeed } from "../../hooks/useFeed";
 import { starRepo, unstarRepo } from "../../api/github";
 import { recordStar } from "../../utils/userProfile";
+import { LoginModalContext } from "../../App";
 
 export default function Feed() {
   const { repos, loading, error, fetchMore, resetFeed } = useFeed();
+  const { user, openLoginModal } = useContext(LoginModalContext);
 
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [currentRepo, setCurrentRepo] = useState(null);
@@ -73,16 +81,18 @@ export default function Feed() {
       if (prev[repoId] === count) {
         return prev;
       }
-
-      return {
-        ...prev,
-        [repoId]: count,
-      };
+      return { ...prev, [repoId]: count };
     });
   }, []);
 
   const toggleStar = async (repo) => {
     if (!repo) return;
+
+    // 로그인 확인
+    if (!user) {
+      openLoginModal("Star를 누르려면 GitHub 로그인이 필요합니다.");
+      return;
+    }
 
     const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
     const isStarred = !!starredRepoIds[repo.id];
@@ -120,6 +130,14 @@ export default function Feed() {
     if (!repo) return;
     navigator.clipboard.writeText(`https://github.com/${repo.full_name}`);
     alert("링크가 복사되었습니다! 🚀");
+  };
+
+  const handleCommentsOpen = (repo) => {
+    if (!user) {
+      openLoginModal("댓글을 보거나 작성하려면 GitHub 로그인이 필요합니다.");
+      return;
+    }
+    setIsCommentsOpen(true);
   };
 
   const goToNextRepo = useCallback(() => {
@@ -183,6 +201,7 @@ export default function Feed() {
 
       {currentRepo && (
         <div className="absolute left-[calc(50%+265px)] bottom-24 flex flex-col gap-5 items-center z-30">
+          {/* Star 버튼 */}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -208,10 +227,11 @@ export default function Feed() {
             </span>
           </button>
 
+          {/* 댓글 버튼 */}
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setIsCommentsOpen(true);
+              handleCommentsOpen(currentRepo);
             }}
             className="flex flex-col items-center transition-transform active:scale-90"
           >
@@ -223,6 +243,7 @@ export default function Feed() {
             </span>
           </button>
 
+          {/* 공유 버튼 */}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -238,6 +259,7 @@ export default function Feed() {
             </span>
           </button>
 
+          {/* GitHub 링크 버튼 */}
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -258,7 +280,7 @@ export default function Feed() {
         </div>
       )}
 
-      {isCommentsOpen && currentRepo && (
+      {isCommentsOpen && currentRepo && user && (
         <div className="absolute top-0 right-0 h-full z-40">
           <CommentsPanel
             repo={currentRepo}

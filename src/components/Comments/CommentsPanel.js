@@ -1,5 +1,12 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
-import { X, Send, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+// src/components/Comments/CommentsPanel.js
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useContext,
+} from "react";
+import { X, Send, Trash2, ChevronDown, ChevronUp, LogIn } from "lucide-react";
 import {
   auth,
   getComments as fetchComments,
@@ -10,27 +17,25 @@ import {
   deleteReply,
 } from "../../api/firebase";
 import { formatDateTimeKo, formatTimeKo } from "../../utils/formatters";
+import { LoginModalContext } from "../../App";
 
 const makeClientRequestId = () =>
   `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
 const REPLIES_CACHE_PREFIX = "chort_replies:";
-const REPLIES_CACHE_TTL = 1000 * 60 * 5; // 5 분
+const REPLIES_CACHE_TTL = 1000 * 60 * 5;
 
-const getRepliesCacheKey = (commentId) =>
-  `${REPLIES_CACHE_PREFIX}${commentId}`;
+const getRepliesCacheKey = (commentId) => `${REPLIES_CACHE_PREFIX}${commentId}`;
 
 const getCachedReplies = (commentId) => {
   try {
     const raw = sessionStorage.getItem(getRepliesCacheKey(commentId));
     if (!raw) return null;
-
     const parsed = JSON.parse(raw);
     if (!parsed?.expiresAt || parsed.expiresAt <= Date.now()) {
       sessionStorage.removeItem(getRepliesCacheKey(commentId));
       return null;
     }
-
     return parsed.replies;
   } catch {
     return null;
@@ -39,10 +44,10 @@ const getCachedReplies = (commentId) => {
 
 const setCachedReplies = (commentId, replies) => {
   try {
-    sessionStorage.setItem(getRepliesCacheKey(commentId), JSON.stringify({
-      replies,
-      expiresAt: Date.now() + REPLIES_CACHE_TTL,
-    }));
+    sessionStorage.setItem(
+      getRepliesCacheKey(commentId),
+      JSON.stringify({ replies, expiresAt: Date.now() + REPLIES_CACHE_TTL }),
+    );
   } catch {
     // ignore quota errors
   }
@@ -57,6 +62,8 @@ const invalidateRepliesCache = (commentId) => {
 };
 
 export default function CommentsPanel({ repo, onClose }) {
+  const { user, openLoginModal } = useContext(LoginModalContext);
+
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [loadingComments, setLoadingComments] = useState(true);
@@ -91,10 +98,15 @@ export default function CommentsPanel({ repo, onClose }) {
   }, [loadComments]);
 
   const handleAddComment = async () => {
-    const user = auth.currentUser;
-    const trimmed = commentText.trim();
+    // 로그인 확인
+    if (!user) {
+      openLoginModal("댓글을 작성하려면 GitHub 로그인이 필요합니다.");
+      return;
+    }
 
-    if (!user || !trimmed || submittingComment) return;
+    const currentUser = auth.currentUser;
+    const trimmed = commentText.trim();
+    if (!currentUser || !trimmed || submittingComment) return;
     if (lastCommentSubmitRef.current === trimmed) return;
 
     setSubmittingComment(true);
@@ -104,10 +116,9 @@ export default function CommentsPanel({ repo, onClose }) {
       const result = await addComment(
         repo.id,
         trimmed,
-        user,
+        currentUser,
         makeClientRequestId(),
       );
-
       if (result) {
         setCommentText("");
         await loadComments();
@@ -123,6 +134,10 @@ export default function CommentsPanel({ repo, onClose }) {
   };
 
   const handleDeleteComment = async (commentId) => {
+    if (!user) {
+      openLoginModal("댓글을 삭제하려면 GitHub 로그인이 필요합니다.");
+      return;
+    }
     if (!window.confirm("이 댓글을 삭제하시겠습니까?")) return;
 
     const success = await deleteComment(commentId);
@@ -135,13 +150,11 @@ export default function CommentsPanel({ repo, onClose }) {
   };
 
   const loadReplies = async (commentId) => {
-    // 캐시 확인
     const cached = getCachedReplies(commentId);
     if (cached) {
       setRepliesByCommentId((prev) => ({ ...prev, [commentId]: cached }));
       return;
     }
-
     setLoadingReplies((prev) => ({ ...prev, [commentId]: true }));
     const replies = await fetchReplies(commentId);
     setRepliesByCommentId((prev) => ({ ...prev, [commentId]: replies }));
@@ -154,21 +167,25 @@ export default function CommentsPanel({ repo, onClose }) {
       setExpandedCommentId(null);
       return;
     }
-
     setExpandedCommentId(commentId);
-
     if (!repliesByCommentId[commentId]) {
       await loadReplies(commentId);
     }
   };
 
   const handleAddReply = async (commentId) => {
-    const user = auth.currentUser;
+    // 로그인 확인
+    if (!user) {
+      openLoginModal("답글을 작성하려면 GitHub 로그인이 필요합니다.");
+      return;
+    }
+
+    const currentUser = auth.currentUser;
     const replyText = replyTextByCommentId[commentId] || "";
     const trimmed = replyText.trim();
     const isSubmitting = !!submittingReplyByCommentId[commentId];
 
-    if (!user || !trimmed || isSubmitting) return;
+    if (!currentUser || !trimmed || isSubmitting) return;
     if (lastReplySubmitRef.current[commentId] === trimmed) return;
 
     setSubmittingReplyByCommentId((prev) => ({ ...prev, [commentId]: true }));
@@ -181,13 +198,11 @@ export default function CommentsPanel({ repo, onClose }) {
       const result = await addReply(
         commentId,
         trimmed,
-        user,
+        currentUser,
         makeClientRequestId(),
       );
-
       if (result) {
         setReplyTextByCommentId((prev) => ({ ...prev, [commentId]: "" }));
-        // [수정] 대댓글 추가 시 해당 댓글의 캐시 무효화
         invalidateRepliesCache(commentId);
         await Promise.all([loadReplies(commentId), loadComments()]);
       }
@@ -196,7 +211,6 @@ export default function CommentsPanel({ repo, onClose }) {
         ...prev,
         [commentId]: false,
       }));
-
       setTimeout(() => {
         if (lastReplySubmitRef.current[commentId] === trimmed) {
           lastReplySubmitRef.current = {
@@ -209,11 +223,14 @@ export default function CommentsPanel({ repo, onClose }) {
   };
 
   const handleDeleteReply = async (commentId, replyId) => {
+    if (!user) {
+      openLoginModal("답글을 삭제하려면 GitHub 로그인이 필요합니다.");
+      return;
+    }
     if (!window.confirm("이 대댓글을 삭제하시겠습니까?")) return;
 
     const success = await deleteReply(commentId, replyId);
     if (success) {
-      // [수정] 대댓글 삭제 시 해당 댓글의 캐시 무효화
       invalidateRepliesCache(commentId);
       await Promise.all([loadReplies(commentId), loadComments()]);
     }
@@ -231,7 +248,6 @@ export default function CommentsPanel({ repo, onClose }) {
           <p className="text-sm text-gray-500">{repo.name}</p>
           <p className="text-xs text-gray-600 mt-1">댓글 ({totalCount})</p>
         </div>
-
         <button
           onClick={onClose}
           className="text-gray-400 hover:text-white transition"
@@ -264,7 +280,6 @@ export default function CommentsPanel({ repo, onClose }) {
                     ) : (
                       <div className="w-6 h-6 rounded-full bg-gray-700 shrink-0" />
                     )}
-
                     <div className="min-w-0">
                       <p className="font-bold text-white text-xs truncate">
                         {comment.displayName}
@@ -275,7 +290,7 @@ export default function CommentsPanel({ repo, onClose }) {
                     </div>
                   </div>
 
-                  {auth.currentUser?.uid === comment.userId && (
+                  {user && auth.currentUser?.uid === comment.userId && (
                     <button
                       onClick={() => handleDeleteComment(comment.id)}
                       className="text-red-400 hover:text-red-300 transition shrink-0"
@@ -334,7 +349,6 @@ export default function CommentsPanel({ repo, onClose }) {
                             ) : (
                               <div className="w-4 h-4 rounded-full bg-gray-700 shrink-0" />
                             )}
-
                             <div className="min-w-0">
                               <p className="text-xs font-bold text-white truncate">
                                 {reply.displayName}
@@ -345,7 +359,7 @@ export default function CommentsPanel({ repo, onClose }) {
                             </div>
                           </div>
 
-                          {auth.currentUser?.uid === reply.userId && (
+                          {user && auth.currentUser?.uid === reply.userId && (
                             <button
                               onClick={() =>
                                 handleDeleteReply(comment.id, reply.id)
@@ -364,36 +378,52 @@ export default function CommentsPanel({ repo, onClose }) {
                     ))
                   )}
 
+                  {/* 답글 입력 */}
                   <div className="flex gap-1 pt-2">
-                    <input
-                      type="text"
-                      placeholder="답글..."
-                      value={replyTextByCommentId[comment.id] || ""}
-                      onChange={(e) =>
-                        setReplyTextByCommentId((prev) => ({
-                          ...prev,
-                          [comment.id]: e.target.value,
-                        }))
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          handleAddReply(comment.id);
+                    {user ? (
+                      <>
+                        <input
+                          type="text"
+                          placeholder="답글..."
+                          value={replyTextByCommentId[comment.id] || ""}
+                          onChange={(e) =>
+                            setReplyTextByCommentId((prev) => ({
+                              ...prev,
+                              [comment.id]: e.target.value,
+                            }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleAddReply(comment.id);
+                            }
+                          }}
+                          className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white placeholder-gray-600 focus:outline-none focus:border-purple-500 text-xs"
+                        />
+                        <button
+                          onClick={() => handleAddReply(comment.id)}
+                          disabled={
+                            !replyTextByCommentId[comment.id]?.trim() ||
+                            !!submittingReplyByCommentId[comment.id]
+                          }
+                          className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded px-2 py-1 transition flex items-center"
+                        >
+                          <Send className="w-3 h-3" />
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() =>
+                          openLoginModal(
+                            "답글을 작성하려면 로그인이 필요합니다.",
+                          )
                         }
-                      }}
-                      className="flex-1 bg-white/10 border border-white/20 rounded px-2 py-1 text-white placeholder-gray-600 focus:outline-none focus:border-purple-500 text-xs"
-                    />
-
-                    <button
-                      onClick={() => handleAddReply(comment.id)}
-                      disabled={
-                        !replyTextByCommentId[comment.id]?.trim() ||
-                        !!submittingReplyByCommentId[comment.id]
-                      }
-                      className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded px-2 py-1 transition flex items-center"
-                    >
-                      <Send className="w-3 h-3" />
-                    </button>
+                        className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs text-purple-400 border border-purple-500/30 rounded hover:bg-purple-500/10 transition"
+                      >
+                        <LogIn className="w-3 h-3" />
+                        로그인하고 답글 달기
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -402,29 +432,43 @@ export default function CommentsPanel({ repo, onClose }) {
         )}
       </div>
 
+      {/* 댓글 입력 영역 */}
       <div className="border-t border-gray-800 p-4 shrink-0">
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="댓글을 입력하세요..."
-            value={commentText}
-            onChange={(e) => setCommentText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleAddComment();
-              }
-            }}
-            className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm"
-          />
+        {user ? (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="댓글을 입력하세요..."
+              value={commentText}
+              onChange={(e) => setCommentText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleAddComment();
+                }
+              }}
+              className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 text-sm"
+            />
+            <button
+              onClick={handleAddComment}
+              disabled={!commentText.trim() || submittingComment}
+              className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-lg px-3 py-2 transition flex items-center gap-1"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </div>
+        ) : (
+          // 비로그인 시 로그인 유도 버튼
           <button
-            onClick={handleAddComment}
-            disabled={!commentText.trim() || submittingComment}
-            className="bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 text-white rounded-lg px-3 py-2 transition flex items-center gap-1"
+            onClick={() =>
+              openLoginModal("댓글을 작성하려면 GitHub 로그인이 필요합니다.")
+            }
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-lg border border-purple-500/40 text-purple-400 hover:bg-purple-500/10 transition text-sm font-semibold"
           >
-            <Send className="w-4 h-4" />
+            <LogIn className="w-4 h-4" />
+            로그인하고 댓글 달기
           </button>
-        </div>
+        )}
       </div>
     </div>
   );

@@ -1,8 +1,8 @@
+// src/pages/Login.js
 import React from "react";
 import { useNavigate } from "react-router-dom";
 import { loginWithGithub } from "../api/firebase";
 
-// 💡 별도의 import 없이 바로 사용할 수 있는 GitHub SVG 아이콘 컴포넌트
 const GithubLogo = ({ className }) => (
   <svg
     viewBox="0 0 24 24"
@@ -28,10 +28,13 @@ export default function Login() {
     }
   };
 
+  const handleSkip = () => {
+    navigate("/");
+  };
+
   return (
     <div className="w-full h-full bg-[#0d1117] flex flex-col items-center justify-center p-6 overflow-hidden">
       <div className="flex flex-col items-center mb-16">
-        {/* 상단 로고 박스 */}
         <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_40px_rgba(255,255,255,0.15)]">
           <GithubLogo className="w-12 h-12 text-black" />
         </div>
@@ -53,10 +56,18 @@ export default function Login() {
           GitHub로 계속하기
         </button>
 
-        <p className="text-gray-500 text-[11px] text-center leading-relaxed">
-          원활한 시청을 위해 로그인이 필요합니다.
+        {/* 로그인 없이 둘러보기 옵션 */}
+        <button
+          onClick={handleSkip}
+          className="w-full py-4 px-6 rounded-full font-bold text-base text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 transition-all active:scale-95"
+        >
+          로그인 없이 둘러보기
+        </button>
+
+        <p className="text-gray-500 text-[11px] text-center leading-relaxed pt-1">
+          로그인 시 API 호출 한도가 5,000회로 확장됩니다.
           <br />
-          (API 호출 한도가 5,000회로 확장됩니다)
+          Star, 댓글 등 기능을 이용하려면 로그인이 필요합니다.
         </p>
       </div>
     </div>

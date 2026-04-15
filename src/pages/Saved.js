@@ -1,23 +1,30 @@
-import React, { useState, useEffect } from "react";
+// src/pages/Saved.js
+import React, { useState, useEffect, useContext } from "react";
 import { Star, GitFork, Trash2 } from "lucide-react";
 import { unstarRepo } from "../api/github";
+import { LoginModalContext } from "../App";
 
 export default function Saved() {
+  const { user, openLoginModal } = useContext(LoginModalContext);
   const [savedRepos, setSavedRepos] = useState([]);
 
-  // 화면이 켜질 때 로컬 스토리지에서 저장된 목록 불러오기
   useEffect(() => {
+    if (!user) return;
     const loaded = JSON.parse(localStorage.getItem("chort_saved")) || [];
     setSavedRepos(loaded);
-  }, []);
+  }, [user]);
 
-  // 보관함에서 삭제하는 함수 (GitHub unstar 동기화 포함)
   const removeRepo = async (repo, e) => {
-    e.stopPropagation(); // 카드 클릭(링크 이동) 이벤트 무시
+    e.stopPropagation();
+
+    if (!user) {
+      openLoginModal("저장된 레포를 관리하려면 로그인이 필요합니다.");
+      return;
+    }
+
     const previousSaved = savedRepos;
     const newSaved = savedRepos.filter((item) => item.id !== repo.id);
 
-    // UI는 먼저 반영하고, 실패 시 롤백
     localStorage.setItem("chort_saved", JSON.stringify(newSaved));
     setSavedRepos(newSaved);
 
@@ -28,6 +35,27 @@ export default function Saved() {
       setSavedRepos(previousSaved);
     }
   };
+
+  // 비로그인 상태 안내 (App.js의 ProtectedPageFallback이 이미 모달을 띄우지만
+  // 페이지 자체도 명확한 안내 제공)
+  if (!user) {
+    return (
+      <div className="w-full h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-4 p-6">
+        <Star className="w-12 h-12 text-gray-600 mb-2" />
+        <p className="text-gray-400 text-center">
+          저장된 레포지토리를 보려면 로그인이 필요합니다.
+        </p>
+        <button
+          onClick={() =>
+            openLoginModal("저장된 레포지토리를 보려면 로그인이 필요합니다.")
+          }
+          className="mt-2 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-full transition"
+        >
+          GitHub로 로그인
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
@@ -86,7 +114,6 @@ export default function Saved() {
                     </span>
                   </div>
 
-                  {/* 삭제 버튼 */}
                   <button
                     onClick={(e) => removeRepo(repo, e)}
                     className="p-2 bg-gray-800 rounded-full hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition"

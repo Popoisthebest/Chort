@@ -16,7 +16,8 @@ service cloud.firestore {
     }
 
     match /comments/{commentId} {
-      allow read: if isSignedIn();
+      // [변경] 댓글 읽기는 비로그인도 허용 (피드/탐색 페이지 공개 접근 지원)
+      allow read: if true;
 
       allow create: if isSignedIn()
         && request.resource.data.keys().hasOnly([
@@ -38,7 +39,7 @@ service cloud.firestore {
         && request.resource.data.replyCount is int
         && request.resource.data.replyCount == 0;
 
-      // [보안 수정] 댓글 소유자만 삭제 가능 (기존과 동일, 명시적 유지)
+      // 댓글 소유자만 삭제 가능
       allow delete: if isSignedIn()
         && resource.data.userId == request.auth.uid;
 
@@ -48,7 +49,8 @@ service cloud.firestore {
         && request.resource.data.replyCount >= 0;
 
       match /replies/{replyId} {
-        allow read: if isSignedIn();
+        // [변경] 답글 읽기도 비로그인 허용
+        allow read: if true;
 
         allow create: if isSignedIn()
           && request.resource.data.keys().hasOnly([
@@ -65,9 +67,7 @@ service cloud.firestore {
           && isNonEmptyString(request.resource.data.text, 1000)
           && isOptionalString(request.resource.data.clientRequestId, 120);
 
-        // [보안 수정] 대댓글 삭제는 대댓글 작성자 본인만 가능
-        // 기존: 댓글 소유자가 타인의 대댓글도 삭제 가능했던 UI 버그와 분리
-        // 서버 규칙에서 reply.userId == 요청자 uid 만 허용
+        // 대댓글 삭제는 작성자 본인만 가능
         allow delete: if isSignedIn()
           && resource.data.userId == request.auth.uid;
 
@@ -75,7 +75,7 @@ service cloud.firestore {
       }
     }
 
-    // [보안 유지] 그 외 모든 경로 차단
+    // 그 외 모든 경로 차단
     match /{document=**} {
       allow read, write: if false;
     }
