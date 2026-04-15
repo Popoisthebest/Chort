@@ -12,7 +12,6 @@ import {
   Moon,
   Globe,
   ChevronRight,
-  Check,
   Info,
 } from "lucide-react";
 import { logoutUser } from "../api/firebase";
@@ -44,6 +43,8 @@ const loadSettings = () => {
 
 const saveSettings = (settings) => {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  // 다른 탭/컴포넌트에 설정 변경 알림
+  window.dispatchEvent(new Event("storage"));
 };
 
 /**
@@ -156,7 +157,7 @@ function SettingsPanel({ onClose }) {
             </div>
           </div>
 
-          {/* 자동 번역 */}
+          {/* 자동 번역 — 토글 버그 수정 */}
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-semibold text-gray-200">자동 번역</p>
@@ -164,15 +165,20 @@ function SettingsPanel({ onClose }) {
                 카드 설명을 자동으로 번역합니다
               </p>
             </div>
+            {/* 토글: w-11(44px), h-6(24px). 동그라미 w-4 h-4(16px).
+                비활성: left=2px (translate-x-0.5 → 0.125rem=2px)
+                활성:   left=2px + (44-24)=22px → translate-x-[22px] */}
             <button
               onClick={() => update("autoTranslate", !settings.autoTranslate)}
-              className={`w-12 h-6 rounded-full transition-colors relative ${
+              className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${
                 settings.autoTranslate ? "bg-purple-600" : "bg-gray-700"
               }`}
             >
               <span
-                className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                  settings.autoTranslate ? "translate-x-6" : "translate-x-0.5"
+                className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                  settings.autoTranslate
+                    ? "translate-x-[2px]"
+                    : "translate-x-[-18px]"
                 }`}
               />
             </button>
@@ -191,9 +197,9 @@ function SettingsPanel({ onClose }) {
             </div>
             <button
               disabled
-              className="w-12 h-6 rounded-full bg-gray-700 relative opacity-40 cursor-not-allowed"
+              className="relative w-11 h-6 rounded-full bg-gray-700 opacity-40 cursor-not-allowed focus:outline-none"
             >
-              <span className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow translate-x-0.5" />
+              <span className="absolute top-1 w-4 h-4 bg-white rounded-full shadow translate-x-[2px]" />
             </button>
           </div>
 
@@ -323,16 +329,9 @@ export default function Profile() {
 
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
-      {/* 헤더 */}
-      <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20 flex justify-between items-center">
+      {/* 헤더 — 오른쪽 설정 버튼 제거 */}
+      <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20 flex items-center">
         <h1 className="text-3xl font-bold">Profile</h1>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="p-2 rounded-full hover:bg-white/10 transition"
-          title="설정"
-        >
-          <Settings className="w-6 h-6 text-gray-400 hover:text-white transition" />
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 pb-6">

@@ -1,5 +1,11 @@
 // src/pages/Explore.js
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useCallback,
+} from "react";
 import {
   Search,
   Star,
@@ -8,7 +14,11 @@ import {
   TrendingUp,
   ArrowLeft,
 } from "lucide-react";
-import { searchRepos, getTrendingReposBatch } from "../api/github";
+import {
+  searchRepos,
+  getTrendingReposBatch,
+  getTranslatedText,
+} from "../api/github";
 import { getProfile } from "../utils/userProfile";
 import { rankRepos } from "../utils/algorithm";
 import RepoDetailModal from "../components/Repo/RepoDetailModal";
@@ -17,14 +27,205 @@ const DEFAULT_TOPICS = ["React", "Python", "AI", "Web3", "TypeScript"];
 const FALLBACK_AVATAR =
   "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png";
 
+const SETTINGS_KEY = "chort_settings";
+const loadSettings = () => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw
+      ? { autoTranslate: true, language: "ko", ...JSON.parse(raw) }
+      : { autoTranslate: true, language: "ko" };
+  } catch {
+    return { autoTranslate: true, language: "ko" };
+  }
+};
+
+// 카드 설명 번역 훅
+function useTranslatedDescription(description, enabled, language) {
+  const [translated, setTranslated] = useState(null);
+
+  useEffect(() => {
+    if (!enabled || !description) {
+      setTranslated(null);
+      return;
+    }
+    let cancelled = false;
+    getTranslatedText(description, language)
+      .then((result) => {
+        if (!cancelled) setTranslated(result || description);
+      })
+      .catch(() => {
+        if (!cancelled) setTranslated(description);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [description, enabled, language]);
+
+  return translated;
+}
+
+// 레포 카드 (번역 포함)
+function RepoCard({
+  repo,
+  index,
+  onClick,
+  getCardHeightClass,
+  getOwnerAvatar,
+  getOwnerLogin,
+  handleAvatarError,
+  autoTranslate,
+  language,
+}) {
+  const translated = useTranslatedDescription(
+    repo.description,
+    autoTranslate,
+    language,
+  );
+  const displayDesc = autoTranslate
+    ? translated || repo.description || "설명이 없는 레포입니다."
+    : repo.description || "설명이 없는 레포입니다.";
+
+  return (
+    <button
+      key={repo.id}
+      type="button"
+      onClick={() => onClick(repo)}
+      className="mb-4 w-full break-inside-avoid text-left bg-black border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-600 transition group"
+    >
+      <div
+        className={`p-4 flex flex-col justify-between ${getCardHeightClass(repo, index)}`}
+      >
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <img
+              src={getOwnerAvatar(repo)}
+              alt="avatar"
+              onError={handleAvatarError}
+              className="w-7 h-7 rounded-full object-cover bg-gray-800 shrink-0"
+            />
+            <span className="text-xs text-gray-400 truncate">
+              @{getOwnerLogin(repo)}
+            </span>
+          </div>
+          <h3 className="font-bold text-base mb-2 text-blue-400 break-words group-hover:text-blue-300 transition">
+            {repo.name}
+          </h3>
+          <p className="text-sm text-gray-400 leading-snug break-words">
+            {displayDesc}
+          </p>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 items-center text-xs font-bold text-gray-300">
+          <span className="flex items-center gap-1">
+            <Star className="w-4 h-4 text-yellow-400" />
+            {(repo.stargazers_count / 1000).toFixed(1)}k
+          </span>
+          <span className="flex items-center gap-1">
+            <GitFork className="w-4 h-4" />
+            {repo.forks_count}
+          </span>
+          {repo.language && (
+            <span className="text-purple-400 border border-purple-400/30 px-1.5 py-0.5 rounded">
+              {repo.language}
+            </span>
+          )}
+          {repo.topics?.slice(0, 2).map((topic) => (
+            <span
+              key={`${repo.id}-${topic}`}
+              className="text-gray-400 border border-gray-700 px-1.5 py-0.5 rounded"
+            >
+              #{topic}
+            </span>
+          ))}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+// 검색 결과 카드 (번역 포함)
+function SearchResultCard({
+  repo,
+  onClick,
+  getOwnerAvatar,
+  getOwnerLogin,
+  handleAvatarError,
+  autoTranslate,
+  language,
+}) {
+  const translated = useTranslatedDescription(
+    repo.description,
+    autoTranslate,
+    language,
+  );
+  const displayDesc = autoTranslate
+    ? translated || repo.description || "설명이 없는 레포입니다."
+    : repo.description || "설명이 없는 레포입니다.";
+
+  return (
+    <div
+      onClick={() => onClick(repo)}
+      className="bg-black border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition"
+    >
+      <div className="flex items-center gap-3 mb-2">
+        <img
+          src={getOwnerAvatar(repo)}
+          alt="avatar"
+          onError={handleAvatarError}
+          className="w-6 h-6 rounded-full object-cover bg-gray-800 shrink-0"
+        />
+        <span className="text-xs text-gray-400">@{getOwnerLogin(repo)}</span>
+      </div>
+      <h3 className="font-bold text-lg mb-1 truncate text-blue-400">
+        {repo.name}
+      </h3>
+      <p className="text-sm text-gray-400 line-clamp-2 mb-3 leading-snug">
+        {displayDesc}
+      </p>
+      <div className="flex gap-4 text-xs font-bold text-gray-300 flex-wrap">
+        <span className="flex items-center gap-1">
+          <Star className="w-4 h-4 text-yellow-400" />
+          {(repo.stargazers_count / 1000).toFixed(1)}k
+        </span>
+        <span className="flex items-center gap-1">
+          <GitFork className="w-4 h-4" />
+          {repo.forks_count}
+        </span>
+        {repo.language && (
+          <span className="text-purple-400 border border-purple-400/30 px-1.5 rounded">
+            {repo.language}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Explore() {
   const [keyword, setKeyword] = useState("");
   const [results, setResults] = useState([]);
   const [recommendedRepos, setRecommendedRepos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingRecommended, setLoadingRecommended] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState(null);
+  const [currentPage, setCurrentPage] = useState(4); // 다음에 불러올 페이지 (1~3은 초기 로드)
+  const [hasMore, setHasMore] = useState(true);
+  const seenIds = useRef(new Set());
+  const observerRef = useRef(null);
+  const sentinelRef = useRef(null);
+
+  // 설정 (자동 번역, 언어)
+  const [settings, setSettings] = useState(loadSettings);
+  useEffect(() => {
+    const onStorage = () => setSettings(loadSettings());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onStorage);
+    };
+  }, []);
 
   const resetSearch = () => {
     setKeyword("");
@@ -87,6 +288,7 @@ export default function Explore() {
       .join(" ");
   };
 
+  // 초기 추천 레포 로드 (페이지 1~3)
   useEffect(() => {
     const loadRecommendedRepos = async () => {
       setLoadingRecommended(true);
@@ -98,22 +300,83 @@ export default function Explore() {
         const mergedRepos = validResults.flat();
         const rankedRepos = rankRepos(mergedRepos);
         const deduped = [];
-        const seen = new Set();
+        seenIds.current.clear();
         for (const repo of rankedRepos) {
-          if (!seen.has(repo.id)) {
-            seen.add(repo.id);
+          if (!seenIds.current.has(repo.id)) {
+            seenIds.current.add(repo.id);
             deduped.push(repo);
           }
         }
-        setRecommendedRepos(deduped.slice(0, 24));
+        setRecommendedRepos(deduped);
+        setCurrentPage(4);
+        setHasMore(true);
       } catch {
         setRecommendedRepos([]);
+        setHasMore(false);
       } finally {
         setLoadingRecommended(false);
       }
     };
     loadRecommendedRepos();
   }, []);
+
+  // 추가 레포 로드 (무한 스크롤)
+  const loadMoreRepos = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const fetched = await getTrendingReposBatch([
+        currentPage,
+        currentPage + 1,
+      ]);
+      const validResults = fetched.filter(
+        (pageRepos) => Array.isArray(pageRepos) && !pageRepos?.error,
+      );
+      const mergedRepos = validResults.flat();
+      if (mergedRepos.length === 0) {
+        setHasMore(false);
+        return;
+      }
+      const rankedRepos = rankRepos(mergedRepos);
+      const newRepos = [];
+      for (const repo of rankedRepos) {
+        if (!seenIds.current.has(repo.id)) {
+          seenIds.current.add(repo.id);
+          newRepos.push(repo);
+        }
+      }
+      setRecommendedRepos((prev) => [...prev, ...newRepos]);
+      setCurrentPage((p) => p + 2);
+      if (newRepos.length === 0) setHasMore(false);
+    } catch {
+      setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMore, currentPage]);
+
+  // IntersectionObserver로 무한 스크롤 감지
+  useEffect(() => {
+    if (hasSearched) return;
+    if (observerRef.current) observerRef.current.disconnect();
+
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          loadMoreRepos();
+        }
+      },
+      { threshold: 0.1 },
+    );
+
+    if (sentinelRef.current) {
+      observerRef.current.observe(sentinelRef.current);
+    }
+
+    return () => {
+      if (observerRef.current) observerRef.current.disconnect();
+    };
+  }, [loadMoreRepos, hasSearched]);
 
   const [profileVersion, setProfileVersion] = useState(0);
 
@@ -227,63 +490,41 @@ export default function Explore() {
                   아직 추천할 레포가 없습니다.
                 </div>
               ) : (
-                <div className="columns-2 gap-4 [column-fill:_balance]">
-                  {recommendedRepos.map((repo, index) => (
-                    <button
-                      key={repo.id}
-                      type="button"
-                      onClick={() => setSelectedRepo(repo)}
-                      className="mb-4 w-full break-inside-avoid text-left bg-black border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-600 transition group"
-                    >
-                      <div
-                        className={`p-4 flex flex-col justify-between ${getCardHeightClass(repo, index)}`}
-                      >
-                        <div>
-                          <div className="flex items-center gap-2 mb-3">
-                            <img
-                              src={getOwnerAvatar(repo)}
-                              alt="avatar"
-                              onError={handleAvatarError}
-                              className="w-7 h-7 rounded-full object-cover bg-gray-800 shrink-0"
-                            />
-                            <span className="text-xs text-gray-400 truncate">
-                              @{getOwnerLogin(repo)}
-                            </span>
-                          </div>
-                          <h3 className="font-bold text-base mb-2 text-blue-400 break-words group-hover:text-blue-300 transition">
-                            {repo.name}
-                          </h3>
-                          <p className="text-sm text-gray-400 leading-snug break-words">
-                            {repo.description || "설명이 없는 레포입니다."}
-                          </p>
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2 items-center text-xs font-bold text-gray-300">
-                          <span className="flex items-center gap-1">
-                            <Star className="w-4 h-4 text-yellow-400" />
-                            {(repo.stargazers_count / 1000).toFixed(1)}k
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <GitFork className="w-4 h-4" />
-                            {repo.forks_count}
-                          </span>
-                          {repo.language && (
-                            <span className="text-purple-400 border border-purple-400/30 px-1.5 py-0.5 rounded">
-                              {repo.language}
-                            </span>
-                          )}
-                          {repo.topics?.slice(0, 2).map((topic) => (
-                            <span
-                              key={`${repo.id}-${topic}`}
-                              className="text-gray-400 border border-gray-700 px-1.5 py-0.5 rounded"
-                            >
-                              #{topic}
-                            </span>
-                          ))}
-                        </div>
+                <>
+                  <div className="columns-2 gap-4 [column-fill:_balance]">
+                    {recommendedRepos.map((repo, index) => (
+                      <RepoCard
+                        key={repo.id}
+                        repo={repo}
+                        index={index}
+                        onClick={setSelectedRepo}
+                        getCardHeightClass={getCardHeightClass}
+                        getOwnerAvatar={getOwnerAvatar}
+                        getOwnerLogin={getOwnerLogin}
+                        handleAvatarError={handleAvatarError}
+                        autoTranslate={settings.autoTranslate}
+                        language={settings.language}
+                      />
+                    ))}
+                  </div>
+
+                  {/* 무한 스크롤 센티넬 */}
+                  <div ref={sentinelRef} className="py-4 flex justify-center">
+                    {loadingMore && (
+                      <div className="flex flex-col items-center gap-2 opacity-70">
+                        <div className="w-6 h-6 border-4 border-[#2F80ED] border-t-transparent rounded-full animate-spin" />
+                        <p className="text-xs text-gray-400">
+                          더 불러오는 중...
+                        </p>
                       </div>
-                    </button>
-                  ))}
-                </div>
+                    )}
+                    {!hasMore && !loadingMore && (
+                      <p className="text-xs text-gray-600">
+                        모든 레포를 불러왔습니다.
+                      </p>
+                    )}
+                  </div>
+                </>
               )}
             </section>
           </div>
@@ -313,44 +554,16 @@ export default function Explore() {
             </div>
 
             {results.map((repo) => (
-              <div
+              <SearchResultCard
                 key={repo.id}
-                onClick={() => setSelectedRepo(repo)}
-                className="bg-black border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition"
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <img
-                    src={getOwnerAvatar(repo)}
-                    alt="avatar"
-                    onError={handleAvatarError}
-                    className="w-6 h-6 rounded-full object-cover bg-gray-800 shrink-0"
-                  />
-                  <span className="text-xs text-gray-400">
-                    @{getOwnerLogin(repo)}
-                  </span>
-                </div>
-                <h3 className="font-bold text-lg mb-1 truncate text-blue-400">
-                  {repo.name}
-                </h3>
-                <p className="text-sm text-gray-400 line-clamp-2 mb-3 leading-snug">
-                  {repo.description || "설명이 없는 레포입니다."}
-                </p>
-                <div className="flex gap-4 text-xs font-bold text-gray-300 flex-wrap">
-                  <span className="flex items-center gap-1">
-                    <Star className="w-4 h-4 text-yellow-400" />
-                    {(repo.stargazers_count / 1000).toFixed(1)}k
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <GitFork className="w-4 h-4" />
-                    {repo.forks_count}
-                  </span>
-                  {repo.language && (
-                    <span className="text-purple-400 border border-purple-400/30 px-1.5 rounded">
-                      {repo.language}
-                    </span>
-                  )}
-                </div>
-              </div>
+                repo={repo}
+                onClick={setSelectedRepo}
+                getOwnerAvatar={getOwnerAvatar}
+                getOwnerLogin={getOwnerLogin}
+                handleAvatarError={handleAvatarError}
+                autoTranslate={settings.autoTranslate}
+                language={settings.language}
+              />
             ))}
           </div>
         )}

@@ -5,15 +5,129 @@ import {
   unstarRepo,
   getStarredRepos,
   invalidateStarredCache,
+  getTranslatedText,
 } from "../api/github";
 import { LoginModalContext } from "../App";
 import RepoDetailModal from "../components/Repo/RepoDetailModal";
+
+const SETTINGS_KEY = "chort_settings";
+const loadSettings = () => {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw
+      ? { autoTranslate: true, language: "ko", ...JSON.parse(raw) }
+      : { autoTranslate: true, language: "ko" };
+  } catch {
+    return { autoTranslate: true, language: "ko" };
+  }
+};
+
+// 레포 카드 설명 번역 훅
+function useTranslatedDescription(description, enabled, language) {
+  const [translated, setTranslated] = useState(null);
+
+  useEffect(() => {
+    if (!enabled || !description) {
+      setTranslated(null);
+      return;
+    }
+    let cancelled = false;
+    getTranslatedText(description, language)
+      .then((result) => {
+        if (!cancelled) setTranslated(result || description);
+      })
+      .catch(() => {
+        if (!cancelled) setTranslated(description);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [description, enabled, language]);
+
+  return translated;
+}
+
+// 개별 저장된 레포 카드 컴포넌트
+function SavedRepoCard({ repo, onOpen, onRemove, autoTranslate, language }) {
+  const translated = useTranslatedDescription(
+    repo.description,
+    autoTranslate,
+    language,
+  );
+  const displayDesc = autoTranslate
+    ? translated || repo.description || "설명이 없는 레포입니다."
+    : repo.description || "설명이 없는 레포입니다.";
+
+  return (
+    <div
+      onClick={() => onOpen(repo)}
+      className="bg-black border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition relative group"
+    >
+      <div className="flex items-center gap-3 mb-2 pr-8">
+        <img
+          src={repo.owner?.avatar_url}
+          alt="avatar"
+          className="w-6 h-6 rounded-full"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+        <span className="text-xs text-gray-400">@{repo.owner?.login}</span>
+      </div>
+      <h3 className="font-bold text-lg mb-1 truncate text-yellow-400">
+        {repo.name}
+      </h3>
+      <p className="text-sm text-gray-400 line-clamp-2 mb-3 leading-snug">
+        {displayDesc}
+      </p>
+
+      <div className="flex justify-between items-end">
+        <div className="flex gap-4 text-xs font-bold text-gray-300">
+          <span className="flex items-center gap-1">
+            <Star className="w-4 h-4 text-yellow-400" />
+            {((repo.stargazers_count || 0) / 1000).toFixed(1)}k
+          </span>
+          <span className="flex items-center gap-1">
+            <GitFork className="w-4 h-4" />
+            {repo.forks_count || 0}
+          </span>
+          {repo.language && (
+            <span className="text-purple-400 border border-purple-400/30 px-1.5 py-0.5 rounded text-[10px]">
+              {repo.language}
+            </span>
+          )}
+        </div>
+
+        {/* Unstar 버튼 */}
+        <button
+          onClick={(e) => onRemove(repo, e)}
+          title="Star 취소"
+          className="p-2 bg-gray-800 rounded-full hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition"
+        >
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function Saved() {
   const { user, openLoginModal } = useContext(LoginModalContext);
   const [savedRepos, setSavedRepos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState(null);
+
+  // 설정 (자동 번역, 언어)
+  const [settings, setSettings] = useState(loadSettings);
+  useEffect(() => {
+    const onStorage = () => setSettings(loadSettings());
+    window.addEventListener("storage", onStorage);
+    window.addEventListener("focus", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("focus", onStorage);
+    };
+  }, []);
 
   /**
    * GitHub API에서 starred 목록을 가져와 localStorage와 병합
@@ -27,7 +141,6 @@ export default function Saved() {
     try {
       // 1. GitHub API starred 목록 가져오기
       const ghStarred = await getStarredRepos();
-      const ghMap = new Map(ghStarred.map((r) => [r.id, r]));
 
       // 2. 현재 localStorage 목록
       const local = JSON.parse(localStorage.getItem("chort_saved")) || [];
@@ -173,59 +286,14 @@ export default function Saved() {
               총 {savedRepos.length}개의 저장된 항목
             </p>
             {savedRepos.map((repo) => (
-              <div
+              <SavedRepoCard
                 key={repo.id}
-                // 클릭 시 GitHub로 이동하는 대신 상세 팝업 표시
-                onClick={() => setSelectedRepo(repo)}
-                className="bg-black border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition relative group"
-              >
-                <div className="flex items-center gap-3 mb-2 pr-8">
-                  <img
-                    src={repo.owner?.avatar_url}
-                    alt="avatar"
-                    className="w-6 h-6 rounded-full"
-                    onError={(e) => {
-                      e.currentTarget.style.display = "none";
-                    }}
-                  />
-                  <span className="text-xs text-gray-400">
-                    @{repo.owner?.login}
-                  </span>
-                </div>
-                <h3 className="font-bold text-lg mb-1 truncate text-yellow-400">
-                  {repo.name}
-                </h3>
-                <p className="text-sm text-gray-400 line-clamp-2 mb-3 leading-snug">
-                  {repo.description || "설명이 없는 레포입니다."}
-                </p>
-
-                <div className="flex justify-between items-end">
-                  <div className="flex gap-4 text-xs font-bold text-gray-300">
-                    <span className="flex items-center gap-1">
-                      <Star className="w-4 h-4 text-yellow-400" />
-                      {((repo.stargazers_count || 0) / 1000).toFixed(1)}k
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <GitFork className="w-4 h-4" />
-                      {repo.forks_count || 0}
-                    </span>
-                    {repo.language && (
-                      <span className="text-purple-400 border border-purple-400/30 px-1.5 py-0.5 rounded text-[10px]">
-                        {repo.language}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Unstar 버튼 */}
-                  <button
-                    onClick={(e) => removeRepo(repo, e)}
-                    title="Star 취소"
-                    className="p-2 bg-gray-800 rounded-full hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
+                repo={repo}
+                onOpen={setSelectedRepo}
+                onRemove={removeRepo}
+                autoTranslate={settings.autoTranslate}
+                language={settings.language}
+              />
             ))}
           </div>
         )}
