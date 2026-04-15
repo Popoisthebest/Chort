@@ -15,6 +15,7 @@ import {
   getReplies as fetchReplies,
   addReply,
   deleteReply,
+  subscribeComments,
 } from "../../api/firebase";
 import { formatDateTimeKo, formatTimeKo } from "../../utils/formatters";
 import { LoginModalContext } from "../../App";
@@ -61,7 +62,7 @@ const invalidateRepliesCache = (commentId) => {
   }
 };
 
-export default function CommentsPanel({ repo, onClose }) {
+export default function CommentsPanel({ repo, onClose, onCountChange }) {
   const { user, openLoginModal } = useContext(LoginModalContext);
 
   const [comments, setComments] = useState([]);
@@ -95,7 +96,21 @@ export default function CommentsPanel({ repo, onClose }) {
     lastCommentSubmitRef.current = "";
     lastReplySubmitRef.current = {};
     loadComments();
-  }, [loadComments]);
+
+    setLoadingComments(true);
+    // 실시간 구독 시작
+    const unsubscribe = subscribeComments(
+      repo.id,
+      (loadedComments, totalCount) => {
+        setComments(loadedComments);
+        setLoadingComments(false);
+        // 부모에게 변경된 갯수 전달
+        if (onCountChange) onCountChange(repo.id, totalCount);
+      },
+    );
+
+    return () => unsubscribe(); // 언마운트 시 구독 해제
+  }, [loadComments, repo.id, onCountChange]);
 
   const handleAddComment = async () => {
     // 로그인 확인

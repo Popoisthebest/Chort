@@ -18,6 +18,7 @@ import {
   serverTimestamp,
   runTransaction,
   setDoc,
+  onSnapshot,
 } from "firebase/firestore";
 import { safeToDate } from "../utils/formatters";
 
@@ -600,4 +601,43 @@ export const deleteReply = async (commentId, replyId) => {
     console.error("답글 삭제 에러:", error.code || "unknown");
     return false;
   }
+};
+
+// 댓글 실시간 구독 함수 추가
+export const subscribeComments = (repoId, callback) => {
+  const commentsRef = collection(db, "comments");
+  const q = query(commentsRef, where("repoId", "==", String(repoId)));
+
+  // onSnapshot은 미구독 시 호출할 함수를 반환합니다.
+  return onSnapshot(
+    q,
+    (querySnapshot) => {
+      const comments = querySnapshot.docs
+        .map((snapshot) => {
+          const data = snapshot.data();
+          return {
+            id: snapshot.id,
+            ...data,
+            createdAt: safeToDate(data.createdAt),
+          };
+        })
+        .sort((a, b) => {
+          const aTime = a.createdAt ? a.createdAt.getTime() : 0;
+          const bTime = b.createdAt ? b.createdAt.getTime() : 0;
+          return bTime - aTime;
+        });
+
+      // 전체 댓글 수 계산 (댓글 + 답글)
+      const totalCount = comments.reduce(
+        (sum, comment) => sum + 1 + (comment.replyCount || 0),
+        0,
+      );
+
+      setCommentCountCache(repoId, totalCount);
+      callback(comments, totalCount);
+    },
+    (error) => {
+      console.error("댓글 구독 에러:", error);
+    },
+  );
 };

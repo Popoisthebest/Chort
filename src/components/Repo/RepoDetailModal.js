@@ -20,6 +20,7 @@ import {
   Users,
   BookOpen,
   Loader2,
+  MessageCircle,
 } from "lucide-react";
 import {
   getRenderedReadmeHtml,
@@ -32,6 +33,8 @@ import {
   invalidateStarredCache,
 } from "../../api/github";
 import { LoginModalContext } from "../../App";
+import CommentsPanel from "../Comments/CommentsPanel"; // 추가
+import { subscribeComments } from "../../api/firebase"; // 추가
 
 const DOMPURIFY_CONFIG = {
   ALLOWED_TAGS: [
@@ -215,6 +218,8 @@ export default function RepoDetailModal({
 }) {
   const { user, openLoginModal } = useContext(LoginModalContext);
 
+  const [isCommentsOpen, setIsCommentsOpen] = useState(false); // 댓글창 상태 추가
+  const [commentCount, setCommentCount] = useState(0);
   const [readmeImage, setReadmeImage] = useState(null);
   const [renderedHtml, setRenderedHtml] = useState("");
   const [fallbackText, setFallbackText] = useState("");
@@ -285,6 +290,18 @@ export default function RepoDetailModal({
       cancelled = true;
     };
   }, [repo]);
+
+  // 모달이 열리면 해당 레포의 댓글 수를 실시간으로 가져옴
+  useEffect(() => {
+    if (!repo?.id) return;
+
+    // 댓글창을 열지 않아도 갯수를 실시간으로 업데이트함
+    const unsubscribe = subscribeComments(repo.id, (comments, totalCount) => {
+      setCommentCount(totalCount);
+    });
+
+    return () => unsubscribe(); // 모달 닫히면 구독 해제
+  }, [repo?.id]);
 
   const handleToggleStar = async (e) => {
     e.stopPropagation();
@@ -390,6 +407,18 @@ export default function RepoDetailModal({
             >
               <Languages className="w-3.5 h-3.5" />
               {isKorean ? "KR" : "EN"}
+            </button>
+
+            <button
+              onClick={() => setIsCommentsOpen(!isCommentsOpen)}
+              className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition ${
+                isCommentsOpen
+                  ? "bg-purple-600 text-white"
+                  : "bg-white/10 text-gray-300"
+              }`}
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>{commentCount}</span>
             </button>
 
             {/* Star 버튼 */}
@@ -521,6 +550,16 @@ export default function RepoDetailModal({
           </div>
         </div>
       </div>
+      {/* 상세페이지용 댓글 패널 오버레이 또는 사이드 바 */}
+      {isCommentsOpen && (
+        <div className="w-full md:w-80 border-l border-gray-800 bg-black flex-shrink-0 p-4">
+          <CommentsPanel
+            repo={repo}
+            onClose={() => setIsCommentsOpen(false)}
+            onCountChange={(id, count) => setCommentCount(count)}
+          />
+        </div>
+      )}
     </div>
   );
 }

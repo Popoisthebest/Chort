@@ -112,12 +112,14 @@ export default function Feed() {
       const success = await starRepo(repo.owner.login, repo.name);
 
       if (success) {
+        const savedRepos =
+          JSON.parse(localStorage.getItem("chort_saved")) || [];
         const exists = savedRepos.some((r) => r.id === repo.id);
+
         if (!exists) {
-          localStorage.setItem(
-            "chort_saved",
-            JSON.stringify([...savedRepos, repo]),
-          );
+          // [수정] 새롭게 저장되는 레포를 배열의 맨 앞(0번 인덱스)에 추가
+          const newSaved = [repo, ...savedRepos];
+          localStorage.setItem("chort_saved", JSON.stringify(newSaved));
         }
         recordStar(repo);
       } else {
@@ -157,6 +159,14 @@ export default function Feed() {
 
   const isStarred = currentRepo ? !!starredRepoIds[currentRepo.id] : false;
   const commentCount = currentRepo ? commentCounts[currentRepo.id] || 0 : 0;
+
+  // 댓글 패널에서 발생한 갯수 변경을 Feed state에 즉시 반영하는 콜백
+  const handleCommentsUpdate = useCallback((repoId, count) => {
+    setCommentCounts((prev) => ({
+      ...prev,
+      [repoId]: count,
+    }));
+  }, []);
 
   return (
     <div className="relative flex w-full h-full bg-black gap-0">
@@ -239,7 +249,7 @@ export default function Feed() {
               <MessageCircle className="w-6 h-6 text-white" />
             </div>
             <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-              {commentCount}
+              {commentCounts[currentRepo.id] || 0}
             </span>
           </button>
 
@@ -285,6 +295,7 @@ export default function Feed() {
           <CommentsPanel
             repo={currentRepo}
             onClose={() => setIsCommentsOpen(false)}
+            onCountChange={handleCommentsUpdate} // 실시간 연동 핵심
           />
         </div>
       )}
