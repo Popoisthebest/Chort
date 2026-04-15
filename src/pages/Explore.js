@@ -1,3 +1,4 @@
+// src/pages/Explore.js
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Search,
@@ -6,12 +7,11 @@ import {
   Sparkles,
   TrendingUp,
   ArrowLeft,
-  X,
-  ExternalLink,
 } from "lucide-react";
 import { searchRepos, getTrendingReposBatch } from "../api/github";
 import { getProfile } from "../utils/userProfile";
 import { rankRepos } from "../utils/algorithm";
+import RepoDetailModal from "../components/Repo/RepoDetailModal";
 
 const DEFAULT_TOPICS = ["React", "Python", "AI", "Web3", "TypeScript"];
 const FALLBACK_AVATAR =
@@ -39,13 +39,9 @@ export default function Explore() {
   const getCardHeightClass = (repo, index) => {
     const descLength = repo?.description?.length || 0;
     const topicCount = repo?.topics?.length || 0;
-
-    if (descLength > 120 || topicCount >= 3 || index % 7 === 0) {
+    if (descLength > 120 || topicCount >= 3 || index % 7 === 0)
       return "min-h-[260px]";
-    }
-    if (descLength > 70 || index % 5 === 0) {
-      return "min-h-[220px]";
-    }
+    if (descLength > 70 || index % 5 === 0) return "min-h-[220px]";
     return "min-h-[180px]";
   };
 
@@ -53,26 +49,15 @@ export default function Explore() {
     e.currentTarget.src = FALLBACK_AVATAR;
   };
 
-  const openRepoDetail = (repo) => {
-    setSelectedRepo(repo);
-  };
-
-  const closeRepoDetail = () => {
-    setSelectedRepo(null);
-  };
-
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!keyword.trim()) return;
-
     setLoading(true);
     setHasSearched(true);
-
     try {
       const data = await searchRepos(keyword);
       setResults(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("검색 실패:", error);
+    } catch {
       setResults([]);
     } finally {
       setLoading(false);
@@ -83,12 +68,10 @@ export default function Explore() {
     setKeyword(tag);
     setLoading(true);
     setHasSearched(true);
-
     try {
       const data = await searchRepos(tag);
       setResults(Array.isArray(data) ? data : []);
-    } catch (error) {
-      console.error("태그 검색 실패:", error);
+    } catch {
       setResults([]);
     } finally {
       setLoading(false);
@@ -107,59 +90,36 @@ export default function Explore() {
   useEffect(() => {
     const loadRecommendedRepos = async () => {
       setLoadingRecommended(true);
-
       try {
         const fetched = await getTrendingReposBatch([1, 2, 3]);
-
         const validResults = fetched.filter(
           (pageRepos) => Array.isArray(pageRepos) && !pageRepos?.error,
         );
-
         const mergedRepos = validResults.flat();
         const rankedRepos = rankRepos(mergedRepos);
-
         const deduped = [];
         const seen = new Set();
-
         for (const repo of rankedRepos) {
           if (!seen.has(repo.id)) {
             seen.add(repo.id);
             deduped.push(repo);
           }
         }
-
         setRecommendedRepos(deduped.slice(0, 24));
-      } catch (error) {
-        console.error("추천 repo 로드 실패:", error);
+      } catch {
         setRecommendedRepos([]);
       } finally {
         setLoadingRecommended(false);
       }
     };
-
     loadRecommendedRepos();
   }, []);
 
-  useEffect(() => {
-    if (!selectedRepo) return;
-
-    const handleKeyDown = (e) => {
-      if (e.key === "Escape") {
-        closeRepoDetail();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedRepo]);
-
   const [profileVersion, setProfileVersion] = useState(0);
 
-  // 프로필이 변경될 때마다 버전 업데이트 (localStorage 기반이므로 수동 트리거)
   useEffect(() => {
     const handleStorageChange = () => setProfileVersion((v) => v + 1);
     window.addEventListener("storage", handleStorageChange);
-    // 페이지 포커스 시에도 체크 (다른 탭에서의 변경 반영)
     window.addEventListener("focus", handleStorageChange);
     return () => {
       window.removeEventListener("storage", handleStorageChange);
@@ -169,20 +129,15 @@ export default function Explore() {
 
   const personalizedTopics = useMemo(() => {
     const profile = getProfile();
-
     const topicEntries = Object.entries(profile.topics || {})
       .sort((a, b) => b[1] - a[1])
       .map(([topic]) => topic);
-
     const languageEntries = Object.entries(profile.languages || {})
       .sort((a, b) => b[1] - a[1])
       .map(([language]) => language);
-
     const merged = [...topicEntries, ...languageEntries, ...DEFAULT_TOPICS];
-
     const unique = [];
     const seen = new Set();
-
     for (const item of merged) {
       if (!item) continue;
       const normalized = String(item).trim();
@@ -192,12 +147,12 @@ export default function Explore() {
         unique.push(normalized);
       }
     }
-
     return unique.slice(0, 12).map(toDisplayTag);
   }, [profileVersion]);
 
   return (
     <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
+      {/* ── 검색 헤더 ── */}
       <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20 border-b border-gray-800">
         <div className="flex items-center gap-3 mb-4">
           {hasSearched && (
@@ -227,7 +182,9 @@ export default function Explore() {
         </form>
       </div>
 
+      {/* ── 콘텐츠 ── */}
       <div className="flex-1 overflow-y-auto px-6 pb-6">
+        {/* 추천 탭 */}
         {!hasSearched && (
           <div className="mt-4 space-y-8">
             <section>
@@ -237,7 +194,6 @@ export default function Explore() {
                   관심 있을 만한 주제
                 </h2>
               </div>
-
               <div className="flex gap-2 flex-wrap">
                 {personalizedTopics.map((topic) => (
                   <button
@@ -276,7 +232,7 @@ export default function Explore() {
                     <button
                       key={repo.id}
                       type="button"
-                      onClick={() => openRepoDetail(repo)}
+                      onClick={() => setSelectedRepo(repo)}
                       className="mb-4 w-full break-inside-avoid text-left bg-black border border-gray-800 rounded-2xl overflow-hidden hover:border-gray-600 transition group"
                     >
                       <div
@@ -294,33 +250,27 @@ export default function Explore() {
                               @{getOwnerLogin(repo)}
                             </span>
                           </div>
-
                           <h3 className="font-bold text-base mb-2 text-blue-400 break-words group-hover:text-blue-300 transition">
                             {repo.name}
                           </h3>
-
                           <p className="text-sm text-gray-400 leading-snug break-words">
                             {repo.description || "설명이 없는 레포입니다."}
                           </p>
                         </div>
-
                         <div className="mt-4 flex flex-wrap gap-2 items-center text-xs font-bold text-gray-300">
                           <span className="flex items-center gap-1">
                             <Star className="w-4 h-4 text-yellow-400" />
                             {(repo.stargazers_count / 1000).toFixed(1)}k
                           </span>
-
                           <span className="flex items-center gap-1">
                             <GitFork className="w-4 h-4" />
                             {repo.forks_count}
                           </span>
-
                           {repo.language && (
                             <span className="text-purple-400 border border-purple-400/30 px-1.5 py-0.5 rounded">
                               {repo.language}
                             </span>
                           )}
-
                           {repo.topics?.slice(0, 2).map((topic) => (
                             <span
                               key={`${repo.id}-${topic}`}
@@ -339,6 +289,7 @@ export default function Explore() {
           </div>
         )}
 
+        {/* 로딩 */}
         {loading && (
           <div className="flex flex-col items-center justify-center mt-20 opacity-70">
             <div className="w-8 h-8 border-4 border-[#2F80ED] border-t-transparent rounded-full animate-spin mb-4" />
@@ -346,6 +297,7 @@ export default function Explore() {
           </div>
         )}
 
+        {/* 검색 결과 */}
         {!loading && hasSearched && results.length > 0 && (
           <div className="flex flex-col gap-4 mt-4">
             <div className="flex items-center justify-between mb-2">
@@ -363,7 +315,7 @@ export default function Explore() {
             {results.map((repo) => (
               <div
                 key={repo.id}
-                onClick={() => openRepoDetail(repo)}
+                onClick={() => setSelectedRepo(repo)}
                 className="bg-black border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-600 transition"
               >
                 <div className="flex items-center gap-3 mb-2">
@@ -377,26 +329,21 @@ export default function Explore() {
                     @{getOwnerLogin(repo)}
                   </span>
                 </div>
-
                 <h3 className="font-bold text-lg mb-1 truncate text-blue-400">
                   {repo.name}
                 </h3>
-
                 <p className="text-sm text-gray-400 line-clamp-2 mb-3 leading-snug">
                   {repo.description || "설명이 없는 레포입니다."}
                 </p>
-
                 <div className="flex gap-4 text-xs font-bold text-gray-300 flex-wrap">
                   <span className="flex items-center gap-1">
                     <Star className="w-4 h-4 text-yellow-400" />
                     {(repo.stargazers_count / 1000).toFixed(1)}k
                   </span>
-
                   <span className="flex items-center gap-1">
                     <GitFork className="w-4 h-4" />
                     {repo.forks_count}
                   </span>
-
                   {repo.language && (
                     <span className="text-purple-400 border border-purple-400/30 px-1.5 rounded">
                       {repo.language}
@@ -408,6 +355,7 @@ export default function Explore() {
           </div>
         )}
 
+        {/* 결과 없음 */}
         {!loading && hasSearched && results.length === 0 && (
           <div className="flex flex-col items-center justify-center mt-20 text-gray-500">
             <p>검색 결과가 없습니다.</p>
@@ -422,134 +370,12 @@ export default function Explore() {
         )}
       </div>
 
+      {/* ── 상세보기 모달 (RepoDetailModal 공용) ── */}
       {selectedRepo && (
-        <div className="absolute inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-3xl border border-gray-800 bg-[#0d1117] shadow-2xl flex flex-col">
-            <div className="flex items-start justify-between gap-4 p-5 border-b border-gray-800 shrink-0">
-              <div className="min-w-0">
-                <div className="flex items-center gap-3 mb-2">
-                  <img
-                    src={getOwnerAvatar(selectedRepo)}
-                    alt="avatar"
-                    onError={handleAvatarError}
-                    className="w-9 h-9 rounded-full object-cover bg-gray-800 shrink-0"
-                  />
-                  <div className="min-w-0">
-                    <p className="text-sm text-gray-400 truncate">
-                      @{getOwnerLogin(selectedRepo)}
-                    </p>
-                    <h2 className="text-xl font-bold text-white truncate">
-                      {selectedRepo.name}
-                    </h2>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 text-xs font-bold text-gray-300">
-                  <span className="flex items-center gap-1">
-                    <Star className="w-4 h-4 text-yellow-400" />
-                    {(selectedRepo.stargazers_count / 1000).toFixed(1)}k
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <GitFork className="w-4 h-4" />
-                    {selectedRepo.forks_count}
-                  </span>
-                  {selectedRepo.language && (
-                    <span className="text-purple-400 border border-purple-400/30 px-2 py-1 rounded">
-                      {selectedRepo.language}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  onClick={() => window.open(selectedRepo.html_url, "_blank")}
-                  className="flex items-center gap-2 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 transition text-sm font-medium"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  GitHub
-                </button>
-                <button
-                  onClick={closeRepoDetail}
-                  className="flex items-center justify-center w-10 h-10 rounded-full bg-gray-800 hover:bg-gray-700 transition"
-                  aria-label="닫기"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-5">
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-4">
-                <h3 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
-                  Description
-                </h3>
-                <p className="text-sm text-gray-300 leading-relaxed break-words">
-                  {selectedRepo.description || "설명이 없는 레포입니다."}
-                </p>
-              </div>
-
-              {selectedRepo.topics?.length > 0 && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mb-4">
-                  <h3 className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-3">
-                    Topics
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedRepo.topics.map((topic) => (
-                      <button
-                        key={topic}
-                        onClick={() => {
-                          closeRepoDetail();
-                          handleTagClick(topic);
-                        }}
-                        className="text-xs font-bold px-2.5 py-1.5 bg-white/5 border border-white/10 rounded text-gray-300 hover:bg-white/10 transition"
-                      >
-                        #{topic}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
-                  Repo Info
-                </h3>
-                <div className="space-y-2 text-sm text-gray-300">
-                  <p>
-                    <span className="text-gray-500">Full name:</span>{" "}
-                    {selectedRepo.full_name}
-                  </p>
-                  <p>
-                    <span className="text-gray-500">Default branch:</span>{" "}
-                    {selectedRepo.default_branch || "main"}
-                  </p>
-                  <p>
-                    <span className="text-gray-500">Visibility:</span>{" "}
-                    {selectedRepo.private ? "Private" : "Public"}
-                  </p>
-                  <p>
-                    <span className="text-gray-500">Open on GitHub:</span>{" "}
-                    <button
-                      onClick={() =>
-                        window.open(selectedRepo.html_url, "_blank")
-                      }
-                      className="text-blue-400 hover:text-blue-300 transition"
-                    >
-                      {selectedRepo.html_url}
-                    </button>
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={closeRepoDetail}
-            className="absolute inset-0 -z-10"
-            aria-label="overlay 닫기"
-          />
-        </div>
+        <RepoDetailModal
+          repo={selectedRepo}
+          onClose={() => setSelectedRepo(null)}
+        />
       )}
     </div>
   );

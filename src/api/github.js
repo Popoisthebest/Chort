@@ -6,6 +6,7 @@ const DEFAULT_TTL = 1000 * 60 * 10;
 const SEARCH_TTL = 1000 * 60 * 5;
 const README_TTL = 1000 * 60 * 30;
 const TRANSLATE_TTL = 1000 * 60 * 60 * 6;
+const STARRED_TTL = 1000 * 60 * 5;
 
 const memoryCache = new Map();
 const inflightRequests = new Map();
@@ -190,7 +191,6 @@ export const starRepo = async (owner, repo) => {
 
     if (response.status === 204 || response.ok) return true;
 
-    // [보안 수정] 상세 API 에러 메시지를 사용자에게 노출하지 않음
     console.error(`Star 실패: ${response.status}`);
     return false;
   } catch (error) {
@@ -222,6 +222,70 @@ export const unstarRepo = async (owner, repo) => {
   }
 };
 
+/**
+ * 현재 로그인한 사용자의 GitHub Star 목록을 모두 가져옴 (페이지네이션 처리)
+ * @returns {Promise<Array>} starred repos array
+ */
+export const getStarredRepos = async () => {
+  const token = getGithubToken();
+  if (!token) return [];
+
+  return cachedRequest(
+    "user:starred",
+    async () => {
+      const allRepos = [];
+      let page = 1;
+      const perPage = 100;
+
+      while (true) {
+        try {
+          const response = await fetch(
+            `https://api.github.com/user/starred?per_page=${perPage}&page=${page}`,
+            { headers: getHeaders() },
+          );
+
+          if (!response.ok) {
+            console.error("Starred repos 로드 실패:", response.status);
+            break;
+          }
+
+          const data = await response.json();
+          if (!Array.isArray(data) || data.length === 0) break;
+
+          allRepos.push(...data);
+
+          // GitHub API의 Link 헤더로 다음 페이지 존재 여부 확인
+          const linkHeader = response.headers.get("Link");
+          if (!linkHeader || !linkHeader.includes('rel="next"')) break;
+
+          page++;
+          // 최대 5페이지(500개)까지만 로드
+          if (page > 5) break;
+        } catch (error) {
+          console.error("Starred repos 페이지 로드 에러:", error);
+          break;
+        }
+      }
+
+      return allRepos;
+    },
+    STARRED_TTL,
+  );
+};
+
+/**
+ * starred 캐시 무효화 (star/unstar 작업 후 호출)
+ */
+export const invalidateStarredCache = () => {
+  const fullKey = buildCacheKey("user:starred");
+  memoryCache.delete(fullKey);
+  try {
+    sessionStorage.removeItem(fullKey);
+  } catch {
+    // ignore
+  }
+};
+
 export const getTrendingRepos = async (page = 1) => {
   const date = new Date();
   date.setDate(date.getDate() - 7);
@@ -236,7 +300,6 @@ export const getTrendingRepos = async (page = 1) => {
       const data = await response.json();
 
       if (!response.ok || data.message) {
-        // [보안 수정] API 레이트 리밋 등 상세 메시지를 노출하지 않음
         console.error("GitHub API 오류:", response.status);
         return {
           error: true,
@@ -267,7 +330,6 @@ export const searchRepos = async (keyword) => {
       const data = await response.json();
 
       if (!response.ok || data.message) {
-        // [보안 수정] 상세 에러 메시지 노출 차단
         console.error("검색 실패:", response.status);
         return [];
       }
@@ -564,7 +626,7 @@ export const getReadmeImage = async (owner, repo, defaultBranch = "main") => {
       const markdownImgRegex =
         /!\[.*?\]\((.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)\)/i;
       const htmlImgRegex =
-        /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"]/i;
+        /<img.*?src=["'](.*?\.(?:png|jpe?g|gif|svg|webp)(?:\?.*?)?)['"/]/i;
 
       const mdMatch = text.match(markdownImgRegex);
       const htmlMatch = text.match(htmlImgRegex);
