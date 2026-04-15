@@ -1,34 +1,23 @@
 // src/components/Card/ChortCard.js
-// [보안 수정] 커스텀 sanitizer → DOMPurify 교체
-// 설치: npm install dompurify
-// 설치: npm install --save-dev @types/dompurify  (TypeScript 사용 시)
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import DOMPurify from "dompurify";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
-import {
-  getReadmeImage,
-  getReadmeSummary,
-  getRenderedReadmeHtml,
-  translateToKorean,
-} from "../../api/github";
 import { getCommentCount } from "../../api/firebase";
 import { recordView, recordSkip } from "../../utils/userProfile";
 
 const repoDetailCache = new Map();
 
-const getRepoCacheKey = (repo) => repo.full_name;
+const getRepoCacheKey = (repo) =>
+  repo.full_name || `${repo.owner?.login}/${repo.name}`;
 
 const getInitialCacheEntry = (repo) => {
   const key = getRepoCacheKey(repo);
   return (
     repoDetailCache.get(key) || {
-      koDescription: "",
-      renderedReadmeHtml: "",
-      fallbackReadmeText: "",
-      readmeImage: null,
+      koDescription: repo.descriptionKo || "",
+      fallbackReadmeText: repo.summaryKo || "",
+      readmeImage: repo.thumbnail || null,
       commentCount: null,
-      lightLoaded: false,
-      heavyLoaded: false,
+      loaded: false,
     }
   );
 };
@@ -39,84 +28,23 @@ const setRepoCacheEntry = (repo, patch) => {
   repoDetailCache.set(key, { ...prev, ...patch });
 };
 
-// [보안 수정] 커스텀 sanitizer 제거 → DOMPurify 사용
-// DOMPurify는 OWASP 기준을 충족하는 검증된 라이브러리로,
-// data: URI, vbscript:, SVG foreignObject, CSS expression() 등
-// 커스텀 구현에서 놓칠 수 있는 모든 XSS 벡터를 처리함
-const DOMPURIFY_CONFIG = {
-  // 허용 태그를 README 렌더링에 필요한 것만으로 제한
-  ALLOWED_TAGS: [
-    "a",
-    "b",
-    "blockquote",
-    "br",
-    "code",
-    "del",
-    "em",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "hr",
-    "i",
-    "li",
-    "ol",
-    "p",
-    "pre",
-    "s",
-    "strong",
-    "table",
-    "tbody",
-    "td",
-    "th",
-    "thead",
-    "tr",
-    "ul",
-  ],
-  // 허용 속성을 최소화
-  ALLOWED_ATTR: ["href", "title", "rel", "target"],
-  // javascript:, vbscript:, data: URI 등 위험한 프로토콜 차단
-  ALLOW_DATA_ATTR: false,
-  FORCE_BODY: true,
-  // a 태그 href에서 안전한 프로토콜만 허용
-  ALLOWED_URI_REGEXP: /^https?:\/\//i,
-};
-
-// DOMPurify 훅: a 태그에 자동으로 target="_blank" rel="noreferrer noopener" 추가
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noreferrer noopener");
-  }
-});
-
-const sanitizeRenderedHtml = (html) => {
-  if (!html || typeof window === "undefined") return "";
-  try {
-    return DOMPurify.sanitize(html, DOMPURIFY_CONFIG);
-  } catch (error) {
-    console.error("README HTML sanitize 에러:", error.message);
-    return "";
-  }
-};
-
 const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
-  const repoKey = repo.full_name;
+  const repoKey = repo.full_name || `${repo.owner?.login}/${repo.name}`;
   const cacheEntry = useMemo(() => getInitialCacheEntry(repo), [repo]);
 
   const [readmeImage, setReadmeImage] = useState(
-    cacheEntry.readmeImage || null,
+    cacheEntry.readmeImage || repo.thumbnail || null,
   );
   const [koDescription, setKoDescription] = useState(
-    cacheEntry.koDescription || "번역 중...",
-  );
-  const [renderedReadmeHtml, setRenderedReadmeHtml] = useState(
-    cacheEntry.renderedReadmeHtml || "",
+    cacheEntry.koDescription ||
+      repo.descriptionKo ||
+      repo.description ||
+      "설명이 없습니다.",
   );
   const [fallbackReadmeText, setFallbackReadmeText] = useState(
-    cacheEntry.fallbackReadmeText || "",
+    cacheEntry.fallbackReadmeText ||
+      repo.summaryKo ||
+      "README 요약이 없습니다.",
   );
   const [isKorean, setIsKorean] = useState(true);
 
@@ -124,10 +52,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   const viewStartTime = useRef(null);
   const hasRecordedSignal = useRef(false);
 
-  const lightLoadedRef = useRef(cacheEntry.lightLoaded || false);
-  const heavyLoadedRef = useRef(cacheEntry.heavyLoaded || false);
-  const lightLoadingRef = useRef(false);
-  const heavyLoadingRef = useRef(false);
+  const loadedRef = useRef(cacheEntry.loaded || false);
+  const loadingRef = useRef(false);
   const onCommentsCountChangeRef = useRef(onCommentsCountChange);
 
   const ogImageUrl = `https://opengraph.githubassets.com/1/${repo.full_name}`;
@@ -138,15 +64,21 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
   useEffect(() => {
     const latestCache = getInitialCacheEntry(repo);
-    setReadmeImage(latestCache.readmeImage || null);
-    setKoDescription(latestCache.koDescription || "번역 중...");
-    setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
-    setFallbackReadmeText(latestCache.fallbackReadmeText || "");
+    setReadmeImage(latestCache.readmeImage || repo.thumbnail || null);
+    setKoDescription(
+      latestCache.koDescription ||
+        repo.descriptionKo ||
+        repo.description ||
+        "설명이 없습니다.",
+    );
+    setFallbackReadmeText(
+      latestCache.fallbackReadmeText ||
+        repo.summaryKo ||
+        "README 요약이 없습니다.",
+    );
     setIsKorean(true);
-    lightLoadedRef.current = latestCache.lightLoaded || false;
-    heavyLoadedRef.current = latestCache.heavyLoaded || false;
-    lightLoadingRef.current = false;
-    heavyLoadingRef.current = false;
+    loadedRef.current = latestCache.loaded || false;
+    loadingRef.current = false;
     viewStartTime.current = null;
     hasRecordedSignal.current = false;
   }, [repoKey, repo]);
@@ -154,16 +86,12 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   useEffect(() => {
     let cancelled = false;
 
-    const loadLightData = async () => {
-      if (lightLoadedRef.current || lightLoadingRef.current) return;
-      lightLoadingRef.current = true;
+    const loadData = async () => {
+      if (loadedRef.current || loadingRef.current) return;
+      loadingRef.current = true;
+
       try {
         const latestCache = getInitialCacheEntry(repo);
-
-        let nextKoDescription = latestCache.koDescription;
-        if (!nextKoDescription) {
-          nextKoDescription = await translateToKorean(repo.description || "");
-        }
 
         let nextCommentCount = latestCache.commentCount;
         if (nextCommentCount === null || nextCommentCount === undefined) {
@@ -172,83 +100,39 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         if (cancelled) return;
 
-        setKoDescription(nextKoDescription || "설명이 없습니다.");
+        const nextKoDescription =
+          latestCache.koDescription ||
+          repo.descriptionKo ||
+          repo.description ||
+          "설명이 없습니다.";
+
+        const nextReadmeText =
+          latestCache.fallbackReadmeText ||
+          repo.summaryKo ||
+          "README 요약이 없습니다.";
+
+        const nextReadmeImage =
+          latestCache.readmeImage || repo.thumbnail || null;
+
+        setKoDescription(nextKoDescription);
+        setFallbackReadmeText(nextReadmeText);
+        setReadmeImage(nextReadmeImage);
+
         onCommentsCountChangeRef.current?.(repo.id, nextCommentCount || 0);
+
         setRepoCacheEntry(repo, {
-          koDescription: nextKoDescription || "설명이 없습니다.",
+          koDescription: nextKoDescription,
+          fallbackReadmeText: nextReadmeText,
+          readmeImage: nextReadmeImage,
           commentCount: nextCommentCount || 0,
-          lightLoaded: true,
+          loaded: true,
         });
-        lightLoadedRef.current = true;
+
+        loadedRef.current = true;
       } catch (error) {
-        console.error("카드 기본 데이터 로드 에러:", error.message);
-        if (!cancelled)
-          setKoDescription(repo.description || "설명이 없습니다.");
+        console.error("카드 데이터 로드 에러:", error.message);
       } finally {
-        lightLoadingRef.current = false;
-      }
-    };
-
-    const loadHeavyData = async () => {
-      if (heavyLoadedRef.current || heavyLoadingRef.current) return;
-      heavyLoadingRef.current = true;
-      try {
-        const latestCache = getInitialCacheEntry(repo);
-
-        if (latestCache.heavyLoaded) {
-          if (cancelled) return;
-          setReadmeImage(latestCache.readmeImage || null);
-          setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
-          setFallbackReadmeText(
-            latestCache.fallbackReadmeText ||
-              "README 데이터를 찾을 수 없습니다.",
-          );
-          heavyLoadedRef.current = true;
-          return;
-        }
-
-        const [imageUrl, html, summaryText] = await Promise.all([
-          getReadmeImage(repo.owner.login, repo.name, repo.default_branch),
-          getRenderedReadmeHtml(
-            repo.owner.login,
-            repo.name,
-            repo.default_branch,
-          ),
-          getReadmeSummary(repo.owner.login, repo.name, repo.default_branch),
-        ]);
-
-        if (cancelled) return;
-
-        // [보안 수정] DOMPurify 기반 sanitize 적용
-        const safeHtml = sanitizeRenderedHtml(html || "");
-        const safeFallback = summaryText || "README 데이터를 찾을 수 없습니다.";
-
-        setReadmeImage(imageUrl || null);
-        setRenderedReadmeHtml(safeHtml);
-        setFallbackReadmeText(safeFallback);
-        setRepoCacheEntry(repo, {
-          readmeImage: imageUrl || null,
-          renderedReadmeHtml: safeHtml,
-          fallbackReadmeText: safeFallback,
-          heavyLoaded: true,
-        });
-        heavyLoadedRef.current = true;
-      } catch (error) {
-        console.error("카드 상세 데이터 로드 에러:", error.message);
-        if (!cancelled) {
-          setReadmeImage(null);
-          setRenderedReadmeHtml("");
-          setFallbackReadmeText("README 데이터를 찾을 수 없습니다.");
-        }
-        setRepoCacheEntry(repo, {
-          readmeImage: null,
-          renderedReadmeHtml: "",
-          fallbackReadmeText: "README 데이터를 찾을 수 없습니다.",
-          heavyLoaded: true,
-        });
-        heavyLoadedRef.current = true;
-      } finally {
-        heavyLoadingRef.current = false;
+        loadingRef.current = false;
       }
     };
 
@@ -257,8 +141,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         const entry = entries[0];
 
         if (entry.isIntersecting) {
-          loadLightData();
-          loadHeavyData();
+          loadData();
+
           if (!viewStartTime.current) {
             viewStartTime.current = Date.now();
             hasRecordedSignal.current = false;
@@ -266,11 +150,13 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         } else if (viewStartTime.current && !hasRecordedSignal.current) {
           hasRecordedSignal.current = true;
           const dwellMs = Date.now() - viewStartTime.current;
+
           if (dwellMs < 800) {
             recordSkip(repo);
           } else {
             recordView(repo, dwellMs);
           }
+
           viewStartTime.current = null;
         }
 
@@ -290,8 +176,12 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   }, [repoKey, repo, onVisible]);
 
   const displayDescription = isKorean
-    ? koDescription
+    ? koDescription || "설명이 없습니다."
     : repo.description || "No description provided.";
+
+  const displayReadme = isKorean
+    ? fallbackReadmeText || "README 요약이 없습니다."
+    : repo.summaryEn || repo.summaryKo || "README summary is not available.";
 
   return (
     <div
@@ -369,18 +259,9 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
               <FileText className="w-3 h-3" /> README Snippet
             </h3>
 
-            {renderedReadmeHtml ? (
-              <div className="relative h-full overflow-hidden">
-                <div
-                  className="readme-rendered text-gray-300 text-xs leading-relaxed break-words"
-                  dangerouslySetInnerHTML={{ __html: renderedReadmeHtml }}
-                />
-              </div>
-            ) : (
-              <div className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
-                {fallbackReadmeText || "README 불러오는 중..."}
-              </div>
-            )}
+            <div className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
+              {displayReadme}
+            </div>
 
             <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#151a22] to-transparent pointer-events-none rounded-b-xl flex items-end justify-center pb-2">
               <span className="text-[10px] text-gray-500 font-semibold mb-1">

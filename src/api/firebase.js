@@ -18,6 +18,9 @@ import {
   serverTimestamp,
   runTransaction,
   setDoc,
+  orderBy,
+  limit,
+  startAfter,
 } from "firebase/firestore";
 import { safeToDate } from "../utils/formatters";
 
@@ -347,7 +350,6 @@ export const loginWithGithub = async () => {
 
     return result.user;
   } catch (error) {
-    // [보안 수정] 상세 에러 메시지를 사용자에게 노출하지 않음
     console.error("로그인 에러:", error.code || "unknown");
     return null;
   }
@@ -365,6 +367,87 @@ export const logoutUser = async () => {
 
 export const getGithubToken = () => {
   return _githubTokenInMemory;
+};
+
+/**
+ * GitHub Action이 Firestore에 저장한 feed_cards 컬렉션을 읽어온다.
+ * 반환값:
+ * {
+ *   items: Repo[],
+ *   lastVisible: QueryDocumentSnapshot | null,
+ *   hasMore: boolean
+ * }
+ */
+export const getFeedCards = async (lastVisible = null, pageSize = 10) => {
+  try {
+    const feedRef = collection(db, "feed_cards");
+
+    let q = query(feedRef, orderBy("updatedAt", "desc"), limit(pageSize));
+
+    if (lastVisible) {
+      q = query(
+        feedRef,
+        orderBy("updatedAt", "desc"),
+        startAfter(lastVisible),
+        limit(pageSize),
+      );
+    }
+
+    const snapshot = await getDocs(q);
+
+    const items = snapshot.docs.map((docSnap) => {
+      const data = docSnap.data();
+      const owner = data.owner || "";
+      const repoName = data.repoName || "";
+      const htmlUrl =
+        data.html_url ||
+        (owner && repoName ? `https://github.com/${owner}/${repoName}` : "");
+
+      return {
+        id: Number(data.repoId) || docSnap.id,
+        repoId: String(data.repoId || docSnap.id),
+        name: repoName,
+        full_name: owner && repoName ? `${owner}/${repoName}` : repoName,
+        description: data.description || "",
+        descriptionKo: data.descriptionKo || "",
+        summaryKo: data.summaryKo || "",
+        thumbnail: data.thumbnail || null,
+        language: data.language || "Unknown",
+        topics: Array.isArray(data.topics) ? data.topics : [],
+        stargazers_count: Number(data.stars) || 0,
+        forks_count: Number(data.forks) || 0,
+        html_url: htmlUrl,
+        default_branch: data.defaultBranch || "main",
+        private: false,
+        owner: {
+          login: owner,
+          avatar_url: data.ownerAvatar || "",
+          html_url: owner ? `https://github.com/${owner}` : "",
+        },
+        created_at: data.createdAt || null,
+        updatedAt: safeToDate(data.updatedAt),
+      };
+    });
+
+    return {
+      items,
+      lastVisible:
+        snapshot.docs.length > 0
+          ? snapshot.docs[snapshot.docs.length - 1]
+          : null,
+      hasMore: snapshot.docs.length === pageSize,
+    };
+  } catch (error) {
+    console.error(
+      "피드 카드 조회 에러:",
+      error.code || error.message || "unknown",
+    );
+    return {
+      items: [],
+      lastVisible: null,
+      hasMore: false,
+    };
+  }
 };
 
 export const getComments = async (repoId) => {
@@ -449,7 +532,6 @@ export const deleteComment = async (commentId) => {
 
     if (!commentSnap.exists()) return false;
 
-    // [보안 수정] 클라이언트에서도 소유자 검증 (Firestore 규칙과 이중 방어)
     const currentUser = auth.currentUser;
     if (!currentUser || commentSnap.data()?.userId !== currentUser.uid) {
       console.error("댓글 삭제 권한이 없습니다.");
@@ -461,12 +543,6 @@ export const deleteComment = async (commentId) => {
     const repliesRef = collection(db, "comments", commentId, "replies");
     const repliesSnapshot = await getDocs(repliesRef);
 
-    // [보안 수정] 대댓글 삭제 시 각 대댓글의 소유자만 본인 것만 삭제 가능
-    // 댓글 소유자가 타인의 대댓글을 삭제하는 경우를 방지
-    // → 댓글 삭제는 대댓글이 없을 때만 허용하거나,
-    //   Cloud Functions로 cascade delete를 처리하는 것이 권장됨
-    // 현재 구현: Firestore 서버 규칙이 최종 방어선이므로
-    //           자신의 대댓글만 삭제되며, 타인 것은 규칙에서 거부됨
     const deleteJobs = repliesSnapshot.docs.map((replyDoc) =>
       deleteDoc(doc(db, "comments", commentId, "replies", replyDoc.id)),
     );
@@ -555,13 +631,11 @@ export const getReplies = async (commentId) => {
   }
 };
 
-// [보안 수정] 대댓글 삭제 시 소유자 검증 추가
 export const deleteReply = async (commentId, replyId) => {
   try {
     const commentRef = doc(db, "comments", commentId);
     const replyRef = doc(db, "comments", commentId, "replies", replyId);
 
-    // 삭제 전 대댓글 소유자 확인
     const replySnap = await getDoc(replyRef);
     if (!replySnap.exists()) return false;
 
