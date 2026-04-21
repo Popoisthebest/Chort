@@ -1,94 +1,75 @@
-# Getting Started with Create React App
+# CLAUDE.md
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Available Scripts
+## Commands
 
-In the project directory, you can run:
+```bash
+npm start          # Development server (http://localhost:3000)
+npm run build      # Production build
+npm test           # Run tests in watch mode
+```
 
-### `npm start`
+## Architecture Overview
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+**Chort** is a GitHub trending discovery app built with React (CRA) + Firebase + GitHub API.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+### Tech Stack
 
-### `npm test`
+- React 19, react-router-dom (v7)
+- Firebase (Auth with GitHub OAuth, Firestore for comments/replies)
+- Tailwind CSS for styling
+- Framer Motion, Lucide React icons
+- DOMPurify for XSS protection
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
-
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
-
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
-
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+### Directory Structure
 
 ```
-Chort
-├─ README.md
-├─ package-lock.json
-├─ package.json
-├─ public
-│  ├─ favicon.ico
-│  ├─ index.html
-│  ├─ logo192.png
-│  ├─ logo512.png
-│  ├─ manifest.json
-│  └─ robots.txt
-└─ src
-   ├─ App.css
-   ├─ App.js
-   ├─ App.test.js
-   ├─ index.css
-   ├─ index.js
-   ├─ logo.svg
-   ├─ reportWebVitals.js
-   └─ setupTests.js
-
+src/
+├── api/           # External services (firebase.js, github.js)
+├── components/    # UI components (Card, Feed, Layout, Comments)
+├── hooks/         # Custom hooks (useFeed.js)
+├── pages/         # Route pages (Home, Login, Explore, Saved, Profile)
+├── utils/         # Helpers (algorithm.js, userProfile.js, normalizers.js, formatters.js)
+└── App.js         # Router + auth state management
 ```
+
+### Key Flows
+
+**Authentication**
+
+- GitHub OAuth via Firebase popup login
+- Access token stored in memory + localStorage (uid-bound) for GitHub API calls
+- Token cleared on logout; profile cached in sessionStorage
+
+**Feed System (useFeed hook)**
+
+- Fetches trending repos from GitHub API in batches (3 pages × 4 rounds)
+- Deduplicates against `seenIds` (localStorage, max 500)
+- Ranks repos via `algorithm.js` (trending score × language/topic boost × seen penalty)
+- Infinite scroll via IntersectionObserver
+
+**Personalization**
+
+- User profile stored in localStorage (`chort_user_profile`)
+- Tracks: languages, topics, starred repos, skip count
+- View dwell time recorded via IntersectionObserver (<800ms = skip, else view)
+
+**Caching**
+
+- GitHub API responses cached in memory + sessionStorage with TTLs:
+  - Search: 5min, README: 30min, Translate: 6hr, Default: 10min
+- Inflight request deduplication prevents duplicate fetches
+
+**Comments (Firestore)**
+
+- Nested structure: `comments/{id}/replies`
+- Owner validation on delete (client + Firestore rules)
+- Comment count cached in sessionStorage (2min TTL)
+
+### Security Notes
+
+- DOMPurify sanitizes rendered README HTML (OWASP-compliant)
+- GitHub token stored with uid-binding to prevent cross-user leakage
+- Error messages from APIs are not exposed to users (logged only)
+- `dangerouslySetInnerHTML` only used after DOMPurify sanitization
