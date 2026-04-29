@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
@@ -10,7 +10,7 @@ import {
   translateToKorean,
 } from "../../api/github";
 import { getCommentCount, getGithubToken } from "../../api/firebase";
-import { recordView, recordSkip } from "../../utils/userProfile";
+import { recordView } from "../../utils/userProfile";
 
 const repoDetailCache = new Map();
 
@@ -111,7 +111,9 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
   const cardRef = useRef(null);
   const viewStartTime = useRef(null);
-  const hasRecordedSignal = useRef(false);
+  const trackingActiveRef = useRef(false);
+  const engagementRef = useRef({ hadScroll: false, hadInteraction: false });
+  const removeEngagementListenersRef = useRef(() => {});
 
   const lightLoadedRef = useRef(cacheEntry.lightLoaded || false);
   const heavyLoadedRef = useRef(cacheEntry.heavyLoaded || false);
@@ -125,6 +127,48 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     onCommentsCountChangeRef.current = onCommentsCountChange;
   }, [onCommentsCountChange]);
 
+  const resetEngagement = useCallback(() => {
+    engagementRef.current = { hadScroll: false, hadInteraction: false };
+  }, []);
+
+  const detachEngagementListeners = useCallback(() => {
+    removeEngagementListenersRef.current?.();
+    removeEngagementListenersRef.current = () => {};
+  }, []);
+
+  const attachEngagementListeners = useCallback(() => {
+    detachEngagementListeners();
+
+    const markInteraction = () => {
+      if (!trackingActiveRef.current) return;
+      engagementRef.current.hadInteraction = true;
+    };
+
+    const markScroll = () => {
+      if (!trackingActiveRef.current) return;
+      engagementRef.current.hadInteraction = true;
+      engagementRef.current.hadScroll = true;
+    };
+
+    document.addEventListener("pointerdown", markInteraction, true);
+    document.addEventListener("keydown", markInteraction, true);
+    document.addEventListener("wheel", markScroll, {
+      capture: true,
+      passive: true,
+    });
+    document.addEventListener("touchmove", markScroll, {
+      capture: true,
+      passive: true,
+    });
+
+    removeEngagementListenersRef.current = () => {
+      document.removeEventListener("pointerdown", markInteraction, true);
+      document.removeEventListener("keydown", markInteraction, true);
+      document.removeEventListener("wheel", markScroll, true);
+      document.removeEventListener("touchmove", markScroll, true);
+    };
+  }, [detachEngagementListeners]);
+
   useEffect(() => {
     const latestCache = getInitialCacheEntry(repo);
     setReadmeImage(latestCache.readmeImage || null);
@@ -137,8 +181,10 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     lightLoadingRef.current = false;
     heavyLoadingRef.current = false;
     viewStartTime.current = null;
-    hasRecordedSignal.current = false;
-  }, [repoKey, repo]);
+    trackingActiveRef.current = false;
+    resetEngagement();
+    detachEngagementListeners();
+  }, [detachEngagementListeners, repoKey, repo, resetEngagement]);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,18 +308,21 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         if (entry.isIntersecting) {
           loadLightData();
           loadHeavyData();
-          if (!viewStartTime.current) {
+          if (!trackingActiveRef.current) {
+            trackingActiveRef.current = true;
+            resetEngagement();
+            attachEngagementListeners();
             viewStartTime.current = Date.now();
-            hasRecordedSignal.current = false;
           }
-        } else if (viewStartTime.current && !hasRecordedSignal.current) {
-          hasRecordedSignal.current = true;
+        } else if (viewStartTime.current && trackingActiveRef.current) {
+          trackingActiveRef.current = false;
+          detachEngagementListeners();
           const dwellMs = Date.now() - viewStartTime.current;
-          if (dwellMs < 800) {
-            recordSkip(repo);
-          } else {
-            recordView(repo, dwellMs);
-          }
+          recordView(repo, {
+            dwellMs,
+            hadScroll: engagementRef.current.hadScroll,
+            hadInteraction: engagementRef.current.hadInteraction,
+          });
           viewStartTime.current = null;
         }
 
@@ -288,9 +337,17 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
     return () => {
       cancelled = true;
+      detachEngagementListeners();
       observer.disconnect();
     };
-  }, [repoKey, repo, onVisible]);
+  }, [
+    attachEngagementListeners,
+    detachEngagementListeners,
+    onVisible,
+    repo,
+    repoKey,
+    resetEngagement,
+  ]);
 
   const displayDescription = isKorean
     ? koDescription

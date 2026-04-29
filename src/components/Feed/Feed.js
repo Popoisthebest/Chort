@@ -25,7 +25,11 @@ import {
   starRepo,
   unstarRepo,
 } from "../../api/github";
-import { recordStar } from "../../utils/userProfile";
+import {
+  recordCommentOpen,
+  recordGithubOpen,
+  recordStar,
+} from "../../utils/userProfile";
 import { LoginModalContext } from "../../App";
 
 const LANG_FILTERS = [
@@ -223,6 +227,7 @@ export default function Feed() {
   const handleCommentsOpen = (repo) => {
     setCurrentRepo(repo);
     setIsCommentsOpen(true);
+    recordCommentOpen(repo);
   };
 
   const goToNextRepo = useCallback(() => {
@@ -495,6 +500,7 @@ export default function Feed() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                recordGithubOpen(activeRepo);
                 window.open(
                   `https://github.com/${activeRepo.full_name}`,
                   "_blank",
@@ -568,6 +574,7 @@ export default function Feed() {
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                recordGithubOpen(activeRepo);
                 window.open(
                   `https://github.com/${activeRepo.full_name}`,
                   "_blank",

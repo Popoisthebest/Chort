@@ -35,6 +35,7 @@ import {
 import { LoginModalContext } from "../../App";
 import CommentsPanel from "../Comments/CommentsPanel"; // 추가
 import { subscribeComments } from "../../api/firebase"; // 추가
+import { recordCommentOpen, recordGithubOpen } from "../../utils/userProfile";
 
 const DOMPURIFY_CONFIG = {
   ALLOWED_TAGS: [
@@ -414,7 +415,15 @@ export default function RepoDetailModal({
                 </button>
 
                 <button
-                  onClick={() => setIsCommentsOpen((prev) => !prev)}
+                  onClick={() =>
+                    setIsCommentsOpen((prev) => {
+                      const next = !prev;
+                      if (next) {
+                        recordCommentOpen(repo);
+                      }
+                      return next;
+                    })
+                  }
                   className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition ${
                     isCommentsOpen
                       ? "bg-purple-600 text-white"
@@ -440,7 +449,10 @@ export default function RepoDetailModal({
                 </button>
 
                 <button
-                  onClick={() => window.open(repo.html_url, "_blank")}
+                  onClick={() => {
+                    recordGithubOpen(repo);
+                    window.open(repo.html_url, "_blank");
+                  }}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
