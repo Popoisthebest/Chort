@@ -50,7 +50,7 @@ export default function SideNav({
   };
 
   return (
-    <div className="fixed left-0 top-0 h-screen w-64 bg-black border-r border-gray-800 flex flex-col p-4">
+    <div className="fixed left-0 top-0 flex h-[100dvh] min-h-[100dvh] w-64 flex-col overflow-y-auto border-r border-gray-800 bg-black p-4 pb-6">
       {/* 로고 */}
       <div className="mb-12 mt-2">
         <h1 className="text-2xl font-black text-white">Chort</h1>
@@ -94,7 +94,7 @@ export default function SideNav({
         // 로그인 상태: 로그아웃
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-4 px-4 py-3 rounded-lg text-red-400 hover:bg-red-500/10 transition"
+          className="mt-4 flex w-full items-center gap-4 rounded-lg px-4 py-3 text-red-400 transition hover:bg-red-500/10"
         >
           <LogOut className="w-6 h-6" />
           <span className="text-base font-semibold">로그아웃</span>
@@ -103,7 +103,7 @@ export default function SideNav({
         // 비로그인 상태: 로그인 버튼
         <button
           onClick={handleLoginClick}
-          className="w-full flex items-center gap-4 px-4 py-3 rounded-lg text-purple-400 hover:bg-purple-500/10 border border-purple-500/30 transition"
+          className="mt-4 flex w-full items-center gap-4 rounded-lg border border-purple-500/30 px-4 py-3 text-purple-400 transition hover:bg-purple-500/10"
         >
           <LogIn className="w-6 h-6" />
           <span className="text-base font-semibold">GitHub 로그인</span>

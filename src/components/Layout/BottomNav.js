@@ -26,7 +26,7 @@ export default function BottomNav({ user, openLoginModal }) {
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-800 bg-black/95 px-4 py-3 backdrop-blur-md lg:hidden">
+    <div className="fixed inset-x-0 bottom-0 z-50 border-t border-gray-800 bg-black/95 px-4 py-3 backdrop-blur-md sm:hidden">
       <div className="mx-auto flex max-w-md items-center justify-between">
         {items.map((item) => {
           const Icon = item.icon;

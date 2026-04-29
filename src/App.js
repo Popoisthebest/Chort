@@ -94,7 +94,7 @@ function AppContent({ user, setUser }) {
       <div className="bg-gray-900 min-h-screen flex overflow-hidden">
         {!isLoginPage && (
           <>
-            <div className="hidden lg:block">
+            <div className="hidden sm:block">
               <SideNav
                 user={user}
                 currentPath={location.pathname}
@@ -107,7 +107,7 @@ function AppContent({ user, setUser }) {
         )}
 
         <div
-          className={`flex-1 h-screen min-w-0 flex overflow-hidden ${!isLoginPage ? "lg:ml-64" : ""}`}
+          className={`flex-1 h-screen min-w-0 flex overflow-hidden ${!isLoginPage ? "sm:ml-64" : ""}`}
         >
           <Routes>
             {/* 로그인 페이지 */}
@@ -173,7 +173,7 @@ function ProtectedPageFallback({ openLoginModal, message }) {
   }, [openLoginModal, message]);
 
   return (
-    <div className="w-full h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-6 p-6 pb-24 lg:pb-6">
+    <div className="w-full h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-6 p-6 pb-24 sm:pb-6">
       <div className="text-center">
         <p className="text-gray-400 text-sm mb-4">{message}</p>
         <button

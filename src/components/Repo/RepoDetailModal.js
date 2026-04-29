@@ -5,6 +5,7 @@
 // - Star/Unstar 지원
 import React, { useState, useEffect, useContext, useRef } from "react";
 import DOMPurify from "dompurify";
+import ReactMarkdown from "react-markdown";
 import {
   X,
   ExternalLink,
@@ -22,8 +23,10 @@ import {
   MessageCircle,
 } from "lucide-react";
 import {
+  getReadmeRaw,
   getRenderedReadmeHtml,
   getReadmeSummary,
+  prepareReadmeForLocalRender,
   translateToKorean,
   starRepo,
   unstarRepo,
@@ -218,6 +221,7 @@ export default function RepoDetailModal({
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
   const [renderedHtml, setRenderedHtml] = useState("");
+  const [readmeMarkdown, setReadmeMarkdown] = useState("");
   const [fallbackText, setFallbackText] = useState("");
   const [koDescription, setKoDescription] = useState("");
   const [isKorean, setIsKorean] = useState(true);
@@ -248,24 +252,33 @@ export default function RepoDetailModal({
     let cancelled = false;
     setLoadingReadme(true);
     setRenderedHtml("");
+    setReadmeMarkdown("");
     setFallbackText("");
     setKoDescription("");
 
     const load = async () => {
       try {
-        const [html, summary, koDesc] = await Promise.all([
-          getRenderedReadmeHtml(
-            repo.owner.login,
-            repo.name,
-            repo.default_branch,
-          ),
+        const hasGithubAuth = !!user;
+        const readmePromise = hasGithubAuth
+          ? getRenderedReadmeHtml(
+              repo.owner.login,
+              repo.name,
+              repo.default_branch,
+            )
+          : getReadmeRaw(repo.owner.login, repo.name, repo.default_branch);
+
+        const [readmeContent, summary, koDesc] = await Promise.all([
+          readmePromise,
           getReadmeSummary(repo.owner.login, repo.name, repo.default_branch),
           translateToKorean(repo.description || ""),
         ]);
 
         if (cancelled) return;
 
-        setRenderedHtml(sanitizeHtml(html || ""));
+        setRenderedHtml(hasGithubAuth ? sanitizeHtml(readmeContent || "") : "");
+        setReadmeMarkdown(
+          hasGithubAuth ? "" : prepareReadmeForLocalRender(readmeContent || ""),
+        );
         setFallbackText(summary || "README 데이터를 찾을 수 없습니다.");
         setKoDescription(koDesc || repo.description || "설명이 없습니다.");
       } catch {
@@ -282,7 +295,7 @@ export default function RepoDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [repo]);
+  }, [repo, user]);
 
   // 모달이 열리면 해당 레포의 댓글 수를 실시간으로 가져옴
   useEffect(() => {
@@ -500,6 +513,10 @@ export default function RepoDetailModal({
                     className="readme-rendered text-gray-300 text-xs leading-relaxed break-words"
                     dangerouslySetInnerHTML={{ __html: renderedHtml }}
                   />
+                ) : readmeMarkdown ? (
+                  <div className="readme-rendered text-gray-300 text-xs leading-relaxed break-words">
+                    <ReactMarkdown>{readmeMarkdown}</ReactMarkdown>
+                  </div>
                 ) : (
                   <pre className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
                     {fallbackText || "README 없음"}

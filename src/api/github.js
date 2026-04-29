@@ -107,6 +107,13 @@ const fetchText = async (url, options = {}) => {
   return response.text();
 };
 
+const fetchReadmeFromRawGithub = async (owner, repo, branch, path) => {
+  const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${path}`;
+  return fetchText(rawUrl, {
+    headers: { Accept: "text/plain" },
+  });
+};
+
 const decodeBase64Utf8 = (value) => {
   if (!value || typeof value !== "string") return "";
   try {
@@ -397,6 +404,96 @@ const cleanReadmeText = (text) => {
   return result.trim();
 };
 
+export const prepareReadmeForLocalRender = (text) => {
+  if (!text) return "";
+
+  let normalized = String(text).replace(/\r\n/g, "\n");
+
+  normalized = normalized
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>\s*<p[^>]*>/gi, "\n\n")
+    .replace(/<\/div>\s*<div[^>]*>/gi, "\n\n");
+
+  normalized = normalized.replace(/<img\b([^>]*)>/gi, (_, attrs = "") => {
+    const srcMatch = attrs.match(/\bsrc=["']([^"']+)["']/i);
+    const altMatch = attrs.match(/\balt=["']([^"']*)["']/i);
+    const src = srcMatch?.[1]?.trim();
+    if (!src) return "";
+    const alt = (altMatch?.[1] || "").trim();
+    return `![${alt}](${src})`;
+  });
+
+  normalized = normalized.replace(
+    /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+    (_, href = "", label = "") => {
+      const cleanLabel = String(label)
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!href.trim()) return cleanLabel;
+      return `[${cleanLabel || href.trim()}](${href.trim()})`;
+    },
+  );
+
+  for (let level = 6; level >= 1; level -= 1) {
+    const headingRegex = new RegExp(
+      `<h${level}\\b[^>]*>([\\s\\S]*?)<\\/h${level}>`,
+      "gi",
+    );
+    normalized = normalized.replace(headingRegex, (_, content = "") => {
+      const cleanContent = String(content)
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      return `${"#".repeat(level)} ${cleanContent}\n\n`;
+    });
+  }
+
+  normalized = normalized
+    .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, "**$2**")
+    .replace(/<(em|i)\b[^>]*>([\s\S]*?)<\/\1>/gi, "*$2*")
+    .replace(/<(code)\b[^>]*>([\s\S]*?)<\/\1>/gi, "`$2`")
+    .replace(/<li\b[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n")
+    .replace(/<\/?(ul|ol)[^>]*>/gi, "\n")
+    .replace(/<\/?(p|div|section|article|span|center)[^>]*>/gi, "")
+    .replace(/<[^>]+>/g, "");
+
+  return normalized
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+};
+
+const closeUnbalancedCodeFence = (text) => {
+  const codeBlockCount = (text.match(/```/g) || []).length;
+  if (codeBlockCount % 2 !== 0) {
+    return `${text}\n\n\`\`\``;
+  }
+  return text;
+};
+
+export const buildReadmePreview = (
+  text,
+  { maxChars = 3200, maxLines = 72 } = {},
+) => {
+  if (!text) return "";
+
+  const normalized = String(text).replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "";
+
+  const lines = normalized.split("\n");
+  const limitedByLines = lines.slice(0, maxLines).join("\n");
+  let preview = limitedByLines.slice(0, maxChars).trim();
+
+  if (!preview) return "";
+
+  if (preview.length < normalized.length) {
+    preview = `${preview}\n\n...`;
+  }
+
+  return closeUnbalancedCodeFence(preview);
+};
+
 export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
   const branches = getReadmeCandidateBranches(defaultBranch);
   const paths = getReadmeCandidatePaths();
@@ -404,6 +501,22 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
   return cachedRequest(
     `readme-raw:${owner}/${repo}:${branches.join(",")}:${paths.join(",")}`,
     async () => {
+      for (const branch of branches) {
+        for (const path of paths) {
+          try {
+            const text = await fetchReadmeFromRawGithub(
+              owner,
+              repo,
+              branch,
+              path,
+            );
+            if (text) return text;
+          } catch {
+            // raw.githubusercontent.com 실패 시 다음 후보로 진행
+          }
+        }
+      }
+
       for (const branch of branches) {
         const readmeApiUrl = `https://api.github.com/repos/${owner}/${repo}/readme?ref=${encodeURIComponent(branch)}`;
         try {
@@ -439,7 +552,7 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
 
             if (typeof data.download_url === "string" && data.download_url) {
               const text = await fetchText(data.download_url, {
-                headers: getHeaders({ accept: "text/plain" }),
+                headers: { Accept: "text/plain" },
               });
               if (text) return text;
             }
@@ -460,6 +573,26 @@ export const getReadmeSummary = async (owner, repo, defaultBranch = "main") => {
     async () => {
       const text = await getReadmeRaw(owner, repo, defaultBranch);
       return cleanReadmeText(text);
+    },
+    README_TTL,
+  );
+};
+
+export const getReadmePreviewRaw = async (
+  owner,
+  repo,
+  defaultBranch = "main",
+  options = {},
+) => {
+  const previewKey = `readme-preview-raw:${owner}/${repo}:${defaultBranch}:${
+    options.maxChars || 3200
+  }:${options.maxLines || 72}`;
+
+  return cachedRequest(
+    previewKey,
+    async () => {
+      const text = await getReadmeRaw(owner, repo, defaultBranch);
+      return buildReadmePreview(text, options);
     },
     README_TTL,
   );
@@ -498,6 +631,56 @@ export const getRenderedReadmeHtml = async (
         return response.text();
       } catch (error) {
         console.error("README HTML 렌더링 에러:", error.message);
+        return "";
+      }
+    },
+    README_TTL,
+  );
+};
+
+export const getRenderedReadmeHtmlPreview = async (
+  owner,
+  repo,
+  defaultBranch = "main",
+  options = {},
+) => {
+  const previewKey = `readme-rendered-html-preview:${owner}/${repo}:${defaultBranch}:${
+    options.maxChars || 3200
+  }:${options.maxLines || 72}`;
+
+  return cachedRequest(
+    previewKey,
+    async () => {
+      const markdown = await getReadmePreviewRaw(
+        owner,
+        repo,
+        defaultBranch,
+        options,
+      );
+      if (!markdown) return "";
+
+      try {
+        const response = await fetch("https://api.github.com/markdown", {
+          method: "POST",
+          headers: getHeaders({
+            accept: "text/html",
+            contentType: "application/json",
+          }),
+          body: JSON.stringify({
+            text: markdown,
+            mode: "gfm",
+            context: `${owner}/${repo}`,
+          }),
+        });
+
+        if (!response.ok) {
+          console.error("README preview HTML 렌더링 실패:", response.status);
+          return "";
+        }
+
+        return response.text();
+      } catch (error) {
+        console.error("README preview HTML 렌더링 에러:", error.message);
         return "";
       }
     },

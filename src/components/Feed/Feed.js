@@ -270,7 +270,7 @@ export default function Feed() {
 
   return (
     <div className="relative flex h-full w-full min-w-0 overflow-x-hidden bg-black gap-0">
-      <div className="absolute left-4 top-4 z-30 flex flex-col items-start gap-3">
+      <div className="absolute left-4 top-4 z-30 hidden lg:flex lg:flex-col lg:items-start lg:gap-3">
         <button
           onClick={() => setIsFilterOpen((prev) => !prev)}
           className="flex items-center gap-2 rounded-full border border-white/10 bg-black/70 px-4 py-2 text-xs font-bold text-white backdrop-blur-md transition hover:bg-black/85"
@@ -326,6 +326,62 @@ export default function Feed() {
         )}
       </div>
 
+      {isFilterOpen && (
+        <div className="absolute inset-x-4 bottom-24 z-40 rounded-2xl border border-white/10 bg-black/85 p-4 backdrop-blur-md shadow-2xl lg:hidden">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-xs font-bold tracking-wider text-white">필터</p>
+            <button
+              onClick={() => setIsFilterOpen(false)}
+              className="rounded-full border border-white/10 bg-white/5 p-1.5 text-gray-300 transition hover:bg-white/10"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mb-3">
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+              기간
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {PERIOD_FILTERS.map((p) => (
+                <button
+                  key={p.value}
+                  onClick={() => setPeriodFilter(p.value)}
+                  className={`rounded-full px-3 py-1 text-xs font-bold transition ${
+                    periodFilter === p.value
+                      ? "bg-purple-600 text-white"
+                      : "bg-white/10 text-gray-400 hover:bg-white/20"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+              언어
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {LANG_FILTERS.map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => setLangFilter(lang)}
+                  className={`rounded-full px-3 py-1 text-xs font-bold whitespace-nowrap transition ${
+                    langFilter === lang
+                      ? "bg-blue-600 text-white"
+                      : "bg-white/10 text-gray-400 hover:bg-white/20"
+                  }`}
+                >
+                  {lang}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="relative flex min-w-0 flex-1 overflow-hidden gap-0">
         <div
           className="flex min-w-0 flex-1 justify-center overflow-x-hidden"
@@ -376,6 +432,23 @@ export default function Feed() {
       {activeRepo && (
         <>
           <div className="absolute bottom-28 right-3 z-30 flex flex-col items-center gap-5 lg:hidden">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsFilterOpen((prev) => !prev);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              {isFilterOpen ? (
+                <X className="h-7 w-7 text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]" />
+              ) : (
+                <SlidersHorizontal className="h-7 w-7 text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]" />
+              )}
+              <span className="mt-1 text-[10px] font-bold tracking-wider text-white">
+                Filter
+              </span>
+            </button>
+
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -514,7 +587,7 @@ export default function Feed() {
       )}
 
       {isCommentsOpen && activeRepo && (
-        <div className="absolute inset-0 z-40 lg:inset-y-0 lg:left-auto">
+        <div className="absolute inset-0 z-40 sm:inset-y-0 sm:left-auto">
           <CommentsPanel
             repo={activeRepo}
             onClose={() => setIsCommentsOpen(false)}

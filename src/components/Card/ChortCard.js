@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import DOMPurify from "dompurify";
+import ReactMarkdown from "react-markdown";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import {
   getReadmeImage,
-  getReadmeSummary,
-  getRenderedReadmeHtml,
+  getReadmePreviewRaw,
+  getRenderedReadmeHtmlPreview,
+  prepareReadmeForLocalRender,
   translateToKorean,
 } from "../../api/github";
-import { getCommentCount } from "../../api/firebase";
+import { getCommentCount, getGithubToken } from "../../api/firebase";
 import { recordView, recordSkip } from "../../utils/userProfile";
 
 const repoDetailCache = new Map();
@@ -20,7 +22,7 @@ const getInitialCacheEntry = (repo) => {
     repoDetailCache.get(key) || {
       koDescription: "",
       renderedReadmeHtml: "",
-      fallbackReadmeText: "",
+      readmeMarkdown: "",
       readmeImage: null,
       commentCount: null,
       lightLoaded: false,
@@ -102,8 +104,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   const [renderedReadmeHtml, setRenderedReadmeHtml] = useState(
     cacheEntry.renderedReadmeHtml || "",
   );
-  const [fallbackReadmeText, setFallbackReadmeText] = useState(
-    cacheEntry.fallbackReadmeText || "",
+  const [readmeMarkdown, setReadmeMarkdown] = useState(
+    cacheEntry.readmeMarkdown || "",
   );
   const [isKorean, setIsKorean] = useState(true);
 
@@ -128,7 +130,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     setReadmeImage(latestCache.readmeImage || null);
     setKoDescription(latestCache.koDescription || "번역 중...");
     setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
-    setFallbackReadmeText(latestCache.fallbackReadmeText || "");
+    setReadmeMarkdown(latestCache.readmeMarkdown || "");
     setIsKorean(true);
     lightLoadedRef.current = latestCache.lightLoaded || false;
     heavyLoadedRef.current = latestCache.heavyLoaded || false;
@@ -186,36 +188,51 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           if (cancelled) return;
           setReadmeImage(latestCache.readmeImage || null);
           setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
-          setFallbackReadmeText(
-            latestCache.fallbackReadmeText ||
-              "README 데이터를 찾을 수 없습니다.",
-          );
+          setReadmeMarkdown(latestCache.readmeMarkdown || "");
           heavyLoadedRef.current = true;
           return;
         }
 
-        const [imageUrl, html, summaryText] = await Promise.all([
-          getReadmeImage(repo.owner.login, repo.name, repo.default_branch),
-          getRenderedReadmeHtml(
-            repo.owner.login,
-            repo.name,
-            repo.default_branch,
-          ),
-          getReadmeSummary(repo.owner.login, repo.name, repo.default_branch),
+        const imagePromise = getReadmeImage(
+          repo.owner.login,
+          repo.name,
+          repo.default_branch,
+        );
+        const hasGithubAuth = !!getGithubToken();
+        const readmePromise = hasGithubAuth
+          ? getRenderedReadmeHtmlPreview(
+              repo.owner.login,
+              repo.name,
+              repo.default_branch,
+            )
+          : getReadmePreviewRaw(
+              repo.owner.login,
+              repo.name,
+              repo.default_branch,
+            );
+
+        const [imageUrl, readmeContent] = await Promise.all([
+          imagePromise,
+          readmePromise,
         ]);
 
         if (cancelled) return;
 
-        const safeHtml = sanitizeRenderedHtml(html || "");
-        const safeFallback = summaryText || "README 데이터를 찾을 수 없습니다.";
-
         setReadmeImage(imageUrl || null);
+        const safeHtml = hasGithubAuth
+          ? sanitizeRenderedHtml(readmeContent || "")
+          : "";
         setRenderedReadmeHtml(safeHtml);
-        setFallbackReadmeText(safeFallback);
+        setReadmeMarkdown(
+          hasGithubAuth ? "" : prepareReadmeForLocalRender(readmeContent || ""),
+        );
         setRepoCacheEntry(repo, {
           readmeImage: imageUrl || null,
           renderedReadmeHtml: safeHtml,
-          fallbackReadmeText: safeFallback,
+          readmeMarkdown:
+            hasGithubAuth
+              ? ""
+              : prepareReadmeForLocalRender(readmeContent || ""),
           heavyLoaded: true,
         });
         heavyLoadedRef.current = true;
@@ -224,12 +241,12 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         if (!cancelled) {
           setReadmeImage(null);
           setRenderedReadmeHtml("");
-          setFallbackReadmeText("README 데이터를 찾을 수 없습니다.");
+          setReadmeMarkdown("");
         }
         setRepoCacheEntry(repo, {
           readmeImage: null,
           renderedReadmeHtml: "",
-          fallbackReadmeText: "README 데이터를 찾을 수 없습니다.",
+          readmeMarkdown: "",
           heavyLoaded: true,
         });
         heavyLoadedRef.current = true;
@@ -282,7 +299,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   return (
     <div
       ref={cardRef}
-      className="relative flex h-screen w-full min-w-0 max-w-full snap-start flex-col overflow-hidden bg-[#0d1117]"
+      className="relative flex h-[100dvh] min-h-[100dvh] w-full min-w-0 max-w-full snap-start flex-col overflow-hidden bg-[#0d1117]"
     >
       <div className="absolute inset-0 opacity-20 pointer-events-none">
         <img
@@ -293,9 +310,9 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         <div className="absolute inset-0 bg-gradient-to-b from-[#0d1117]/80 via-[#0d1117]/95 to-[#0d1117]" />
       </div>
 
-      <div className="relative z-10 flex h-full w-full min-w-0 max-w-full flex-col pt-14 pb-24 sm:pt-10 sm:pb-10">
-        <div className="flex shrink-0 items-start justify-between px-4 pb-3 sm:px-5 sm:pb-4">
-          <div className="min-w-0 max-w-[calc(100%-64px)] sm:pr-10">
+      <div className="relative z-10 flex h-full w-full min-w-0 max-w-full flex-col pt-14 pb-24 sm:pt-10 sm:pb-10 md:pt-8 md:pb-6">
+        <div className="flex shrink-0 items-start justify-between px-4 pb-3 sm:px-5 sm:pb-4 md:pb-3">
+          <div className="min-w-0 max-w-[calc(100%-64px)] sm:pr-10 md:pr-8">
             <div
               className="mb-2 flex min-w-0 max-w-full items-center gap-2 cursor-pointer"
               onClick={(e) => {
@@ -312,7 +329,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                 @{repo.owner.login}
               </span>
             </div>
-            <h1 className="min-w-0 max-w-full break-words text-lg font-black leading-tight text-white sm:text-2xl">
+            <h1 className="min-w-0 max-w-full break-words text-lg font-black leading-tight text-white sm:text-2xl md:text-xl">
               {repo.name}
             </h1>
           </div>
@@ -331,12 +348,12 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         </div>
 
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden px-4 sm:px-5">
-          <div className="mb-2.5 w-full min-w-0 max-w-full shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-2.5 backdrop-blur-sm sm:mb-4 sm:p-4">
-            <h3 className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-blue-400 sm:mb-2">
+          <div className="mb-2.5 w-full min-w-0 max-w-full shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-2.5 backdrop-blur-sm sm:mb-4 sm:p-4 md:mb-3 md:p-3">
+            <h3 className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-blue-400 sm:mb-2 md:mb-1.5">
               <AlignLeft className="w-3 h-3" /> Description
             </h3>
             <p
-              className="block w-full min-w-0 max-w-full overflow-hidden whitespace-normal break-all text-[11px] leading-relaxed text-gray-200 sm:text-sm sm:break-words sm:line-clamp-3"
+              className="block w-full min-w-0 max-w-full overflow-hidden whitespace-normal break-all text-[11px] leading-relaxed text-gray-200 sm:text-sm sm:break-words sm:line-clamp-3 md:text-[13px] md:leading-snug"
               style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
             >
               {displayDescription}
@@ -344,46 +361,49 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           </div>
 
           {readmeImage && (
-            <div className="mb-2.5 flex shrink-0 justify-center overflow-hidden rounded-xl border border-white/10 bg-black/50 sm:mb-4">
+            <div className="mb-2.5 flex shrink-0 justify-center overflow-hidden rounded-xl border border-white/10 bg-black/50 sm:mb-4 md:mb-3">
               <img
                 src={readmeImage}
                 alt="Preview"
-                className="h-auto max-h-20 w-full object-contain sm:max-h-32"
+                className="h-auto max-h-20 w-full object-contain sm:max-h-32 md:max-h-24"
               />
             </div>
           )}
 
-          <div className="relative min-h-0 w-full min-w-0 max-w-full flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/40 p-2.5 backdrop-blur-sm sm:p-4">
-            <h3 className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-purple-400 sm:mb-3">
+          <div className="relative min-h-0 w-full min-w-0 max-w-full flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/40 p-2.5 backdrop-blur-sm sm:p-4 md:p-3">
+            <h3 className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-purple-400 sm:mb-3 md:mb-2">
               <FileText className="w-3 h-3" /> README Snippet
             </h3>
 
             {renderedReadmeHtml ? (
               <div className="relative h-full min-w-0 max-w-full overflow-hidden">
                 <div
-                  className="readme-rendered min-w-0 max-w-full overflow-hidden break-words text-gray-300 text-[11px] leading-relaxed sm:text-xs"
+                  className="readme-rendered min-w-0 max-w-full overflow-hidden break-words text-gray-300 text-[11px] leading-relaxed sm:text-xs md:leading-snug"
                   dangerouslySetInnerHTML={{ __html: renderedReadmeHtml }}
                 />
               </div>
+            ) : readmeMarkdown ? (
+              <div className="relative h-full min-w-0 max-w-full overflow-hidden">
+                <div className="readme-rendered min-w-0 max-w-full overflow-hidden break-words text-gray-300 text-[11px] leading-relaxed sm:text-xs md:leading-snug">
+                  <ReactMarkdown>{readmeMarkdown}</ReactMarkdown>
+                </div>
+              </div>
             ) : (
               <div
-                className="block w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-all text-[11px] leading-relaxed text-gray-300 sm:text-xs"
+                className="block w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-all text-[11px] leading-relaxed text-gray-300 sm:text-xs md:leading-snug"
                 style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
               >
-                {fallbackReadmeText || "README 불러오는 중..."}
+                README 불러오는 중...
               </div>
             )}
 
-            <div className="pointer-events-none absolute bottom-0 left-0 right-0 flex h-14 items-end justify-center rounded-b-xl bg-gradient-to-t from-[#151a22] to-transparent pb-1.5 sm:h-24 sm:pb-2">
-              <span className="mb-1 text-[10px] font-semibold text-gray-500">
-                ...Tap Repo to read more
-              </span>
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-14 rounded-b-xl bg-gradient-to-t from-[#151a22] to-transparent sm:h-24 md:h-16">
             </div>
           </div>
         </div>
 
-        <div className="shrink-0 px-4 pr-20 pt-2.5 sm:px-5 sm:pt-4 sm:pr-20">
-          <div className="mb-3 flex flex-wrap gap-1.5 sm:gap-2">
+        <div className="shrink-0 px-4 pr-20 pt-2.5 sm:px-5 sm:pt-4 sm:pr-20 md:pt-3 md:pr-24">
+          <div className="mb-3 flex flex-wrap gap-1.5 sm:gap-2 md:mb-2">
             {repo.language && (
               <span className="rounded border border-blue-500/30 bg-blue-500/20 px-2 py-1 text-[10px] font-bold text-blue-400">
                 {repo.language}
@@ -400,7 +420,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           </div>
 
           <div
-            className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-700 bg-black/80 p-2 transition hover:bg-gray-900 sm:gap-3 sm:p-3"
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-700 bg-black/80 p-2 transition hover:bg-gray-900 sm:gap-3 sm:p-3 md:p-2.5"
             onClick={(e) => {
               e.stopPropagation();
               navigator.clipboard.writeText(
