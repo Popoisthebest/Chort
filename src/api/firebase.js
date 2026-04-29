@@ -16,9 +16,10 @@ import {
   getDoc,
   where,
   serverTimestamp,
-  runTransaction,
   setDoc,
   onSnapshot,
+  getCountFromServer,
+  updateDoc,
 } from "firebase/firestore";
 import { safeToDate } from "../utils/formatters";
 
@@ -146,6 +147,49 @@ const sortByCreatedAtAsc = (a, b) => {
   const aTime = a.createdAt ? a.createdAt.getTime() : 0;
   const bTime = b.createdAt ? b.createdAt.getTime() : 0;
   return aTime - bTime;
+};
+
+const getRepliesCollection = (commentId) =>
+  collection(db, "comments", commentId, "replies");
+
+const getReplyCount = async (commentId) => {
+  try {
+    const countSnapshot = await getCountFromServer(getRepliesCollection(commentId));
+    return Math.max(0, Number(countSnapshot.data()?.count) || 0);
+  } catch (error) {
+    console.error("답글 수 집계 에러:", error.code || "unknown");
+    return 0;
+  }
+};
+
+const toCommentModel = async (snapshot) => {
+  const data = snapshot.data();
+  const replyCount = await getReplyCount(snapshot.id);
+  const deleted = data.deleted === true;
+
+  if (deleted && replyCount === 0) {
+    return null;
+  }
+
+  return {
+    id: snapshot.id,
+    repoId: data.repoId,
+    text: deleted ? "" : data.text || "",
+    userId: data.userId || "",
+    displayName: data.displayName || "익명",
+    photoURL: data.photoURL || "",
+    createdAt: safeToDate(data.createdAt),
+    deleted,
+    deletedAt: safeToDate(data.deletedAt),
+    replyCount,
+  };
+};
+
+const getTotalCommentCount = (comments) => {
+  return comments.reduce(
+    (sum, comment) => sum + (comment.deleted ? 0 : 1) + (comment.replyCount || 0),
+    0,
+  );
 };
 
 const normalizeGithubProfile = (profile = {}) => {
@@ -374,26 +418,13 @@ export const getComments = async (repoId) => {
     const q = query(commentsRef, where("repoId", "==", String(repoId)));
     const querySnapshot = await getDocs(q);
 
-    const comments = querySnapshot.docs
-      .map((snapshot) => {
-        const data = snapshot.data();
-        return {
-          id: snapshot.id,
-          repoId: data.repoId,
-          text: data.text || "",
-          userId: data.userId || "",
-          displayName: data.displayName || "익명",
-          photoURL: data.photoURL || "",
-          createdAt: safeToDate(data.createdAt),
-          replyCount: Number.isFinite(data.replyCount) ? data.replyCount : 0,
-        };
-      })
+    const comments = (
+      await Promise.all(querySnapshot.docs.map((snapshot) => toCommentModel(snapshot)))
+    )
+      .filter(Boolean)
       .sort(sortByCreatedAtDesc);
 
-    const totalCount = comments.reduce(
-      (sum, comment) => sum + 1 + (comment.replyCount || 0),
-      0,
-    );
+    const totalCount = getTotalCommentCount(comments);
     setCommentCountCache(repoId, totalCount);
 
     return comments;
@@ -410,10 +441,7 @@ export const getCommentCount = async (repoId) => {
   }
 
   const comments = await getComments(repoId);
-  return comments.reduce(
-    (sum, comment) => sum + 1 + (comment.replyCount || 0),
-    0,
-  );
+  return getTotalCommentCount(comments);
 };
 
 export const addComment = async (repoId, text, user, clientRequestId) => {
@@ -422,7 +450,8 @@ export const addComment = async (repoId, text, user, clientRequestId) => {
 
   try {
     const identity = resolveGithubIdentity(user);
-    const commentRef = doc(collection(db, "comments"));
+    const requestId = clientRequestId || makeClientRequestId();
+    const commentRef = doc(collection(db, "comments"), `${user.uid}_${requestId}`);
 
     await setDoc(commentRef, {
       repoId: String(repoId),
@@ -431,8 +460,7 @@ export const addComment = async (repoId, text, user, clientRequestId) => {
       displayName: identity.displayName,
       photoURL: identity.photoURL,
       createdAt: serverTimestamp(),
-      replyCount: 0,
-      clientRequestId: clientRequestId || makeClientRequestId(),
+      clientRequestId: requestId,
     });
 
     invalidateCommentCountCache(repoId);
@@ -459,21 +487,11 @@ export const deleteComment = async (commentId) => {
 
     const repoId = commentSnap.data()?.repoId || null;
 
-    const repliesRef = collection(db, "comments", commentId, "replies");
-    const repliesSnapshot = await getDocs(repliesRef);
-
-    // [보안 수정] 대댓글 삭제 시 각 대댓글의 소유자만 본인 것만 삭제 가능
-    // 댓글 소유자가 타인의 대댓글을 삭제하는 경우를 방지
-    // → 댓글 삭제는 대댓글이 없을 때만 허용하거나,
-    //   Cloud Functions로 cascade delete를 처리하는 것이 권장됨
-    // 현재 구현: Firestore 서버 규칙이 최종 방어선이므로
-    //           자신의 대댓글만 삭제되며, 타인 것은 규칙에서 거부됨
-    const deleteJobs = repliesSnapshot.docs.map((replyDoc) =>
-      deleteDoc(doc(db, "comments", commentId, "replies", replyDoc.id)),
-    );
-
-    await Promise.all(deleteJobs);
-    await deleteDoc(commentRef);
+    await updateDoc(commentRef, {
+      text: "",
+      deleted: true,
+      deletedAt: serverTimestamp(),
+    });
 
     if (repoId) {
       invalidateCommentCountCache(repoId);
@@ -495,29 +513,24 @@ export const addReply = async (commentId, text, user, clientRequestId) => {
 
   try {
     const commentRef = doc(db, "comments", commentId);
-    const replyRef = doc(collection(db, "comments", commentId, "replies"));
+    const commentSnap = await getDoc(commentRef);
+    if (!commentSnap.exists() || commentSnap.data()?.deleted === true) {
+      console.error("삭제된 댓글에는 답글을 작성할 수 없습니다.");
+      return null;
+    }
+
+    const requestId = clientRequestId || makeClientRequestId();
+    const replyRef = doc(getRepliesCollection(commentId), `${user.uid}_${requestId}`);
     const identity = resolveGithubIdentity(user);
+    const repoId = commentSnap.data()?.repoId || null;
 
-    const repoId = await runTransaction(db, async (transaction) => {
-      const commentSnap = await transaction.get(commentRef);
-
-      if (!commentSnap.exists()) {
-        throw new Error("원본 댓글이 존재하지 않습니다.");
-      }
-
-      transaction.set(replyRef, {
-        userId: user.uid,
-        displayName: identity.displayName,
-        photoURL: identity.photoURL,
-        text: trimmed,
-        createdAt: serverTimestamp(),
-        clientRequestId: clientRequestId || makeClientRequestId(),
-      });
-
-      const current = commentSnap.data()?.replyCount || 0;
-      transaction.update(commentRef, { replyCount: current + 1 });
-
-      return commentSnap.data()?.repoId || null;
+    await setDoc(replyRef, {
+      userId: user.uid,
+      displayName: identity.displayName,
+      photoURL: identity.photoURL,
+      text: trimmed,
+      createdAt: serverTimestamp(),
+      clientRequestId: requestId,
     });
 
     if (repoId) {
@@ -533,7 +546,7 @@ export const addReply = async (commentId, text, user, clientRequestId) => {
 
 export const getReplies = async (commentId) => {
   try {
-    const repliesRef = collection(db, "comments", commentId, "replies");
+    const repliesRef = getRepliesCollection(commentId);
     const q = query(repliesRef);
     const querySnapshot = await getDocs(q);
 
@@ -572,25 +585,10 @@ export const deleteReply = async (commentId, replyId) => {
       return false;
     }
 
-    const repoId = await runTransaction(db, async (transaction) => {
-      const [commentSnap] = await Promise.all([
-        transaction.get(commentRef),
-        transaction.get(replyRef),
-      ]);
+    const commentSnap = await getDoc(commentRef);
+    const repoId = commentSnap.exists() ? commentSnap.data()?.repoId || null : null;
 
-      if (!commentSnap.exists()) {
-        throw new Error("원본 댓글이 존재하지 않습니다.");
-      }
-
-      transaction.delete(replyRef);
-
-      const current = commentSnap.data()?.replyCount || 0;
-      transaction.update(commentRef, {
-        replyCount: Math.max(0, current - 1),
-      });
-
-      return commentSnap.data()?.repoId || null;
-    });
+    await deleteDoc(replyRef);
 
     if (repoId) {
       invalidateCommentCountCache(repoId);
@@ -603,35 +601,62 @@ export const deleteReply = async (commentId, replyId) => {
   }
 };
 
+export const getMyComments = async (userId) => {
+  if (!userId) return [];
+  try {
+    const commentsRef = collection(db, "comments");
+    const q = query(commentsRef, where("userId", "==", userId));
+    const snapshot = await getDocs(q);
+    const comments = (
+      await Promise.all(snapshot.docs.map((snap) => toCommentModel(snap)))
+    ).filter(Boolean);
+    return comments.sort(
+      (a, b) => (b.createdAt?.getTime() || 0) - (a.createdAt?.getTime() || 0),
+    );
+  } catch (error) {
+    console.error("내 댓글 조회 에러:", error.code || "unknown");
+    return [];
+  }
+};
+
+export const reportComment = async (comment, user) => {
+  if (!comment?.id || !user?.uid) return false;
+
+  try {
+    const reportRef = doc(collection(db, "reports"));
+    await setDoc(reportRef, {
+      repoId: String(comment.repoId || ""),
+      commentId: String(comment.id),
+      commentUserId: String(comment.userId || ""),
+      reporterUserId: user.uid,
+      createdAt: serverTimestamp(),
+    });
+    return true;
+  } catch (error) {
+    console.error("댓글 신고 에러:", error.code || "unknown");
+    return false;
+  }
+};
+
 // 댓글 실시간 구독 함수 추가
 export const subscribeComments = (repoId, callback) => {
   const commentsRef = collection(db, "comments");
   const q = query(commentsRef, where("repoId", "==", String(repoId)));
 
-  // onSnapshot은 미구독 시 호출할 함수를 반환합니다.
   return onSnapshot(
     q,
-    (querySnapshot) => {
-      const comments = querySnapshot.docs
-        .map((snapshot) => {
-          const data = snapshot.data();
-          return {
-            id: snapshot.id,
-            ...data,
-            createdAt: safeToDate(data.createdAt),
-          };
-        })
+    async (querySnapshot) => {
+      const comments = (
+        await Promise.all(querySnapshot.docs.map((snapshot) => toCommentModel(snapshot)))
+      )
+        .filter(Boolean)
         .sort((a, b) => {
           const aTime = a.createdAt ? a.createdAt.getTime() : 0;
           const bTime = b.createdAt ? b.createdAt.getTime() : 0;
           return bTime - aTime;
         });
 
-      // 전체 댓글 수 계산 (댓글 + 답글)
-      const totalCount = comments.reduce(
-        (sum, comment) => sum + 1 + (comment.replyCount || 0),
-        0,
-      );
+      const totalCount = getTotalCommentCount(comments);
 
       setCommentCountCache(repoId, totalCount);
       callback(comments, totalCount);

@@ -45,6 +45,8 @@ export const normalizeComment = (comment = {}) => {
     displayName: trimText(comment.displayName, "익명"),
     photoURL: trimText(comment.photoURL, ""),
     createdAt: safeToDate(comment.createdAt),
+    deleted: comment.deleted === true,
+    deletedAt: safeToDate(comment.deletedAt),
     replyCount: Math.max(0, Number(comment.replyCount) || 0),
   };
 };

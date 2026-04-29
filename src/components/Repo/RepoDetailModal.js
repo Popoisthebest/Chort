@@ -14,7 +14,6 @@ import {
   FileText,
   AlignLeft,
   Terminal,
-  User,
   MapPin,
   Link as LinkIcon,
   Users,
@@ -25,9 +24,7 @@ import {
 import {
   getRenderedReadmeHtml,
   getReadmeSummary,
-  getReadmeImage,
   translateToKorean,
-  getTranslatedText,
   starRepo,
   unstarRepo,
   invalidateStarredCache,
@@ -218,9 +215,8 @@ export default function RepoDetailModal({
 }) {
   const { user, openLoginModal } = useContext(LoginModalContext);
 
-  const [isCommentsOpen, setIsCommentsOpen] = useState(false); // 댓글창 상태 추가
+  const [isCommentsOpen, setIsCommentsOpen] = useState(false);
   const [commentCount, setCommentCount] = useState(0);
-  const [readmeImage, setReadmeImage] = useState(null);
   const [renderedHtml, setRenderedHtml] = useState("");
   const [fallbackText, setFallbackText] = useState("");
   const [koDescription, setKoDescription] = useState("");
@@ -253,13 +249,11 @@ export default function RepoDetailModal({
     setLoadingReadme(true);
     setRenderedHtml("");
     setFallbackText("");
-    setReadmeImage(null);
     setKoDescription("");
 
     const load = async () => {
       try {
-        const [imgUrl, html, summary, koDesc] = await Promise.all([
-          getReadmeImage(repo.owner.login, repo.name, repo.default_branch),
+        const [html, summary, koDesc] = await Promise.all([
           getRenderedReadmeHtml(
             repo.owner.login,
             repo.name,
@@ -271,7 +265,6 @@ export default function RepoDetailModal({
 
         if (cancelled) return;
 
-        setReadmeImage(imgUrl || null);
         setRenderedHtml(sanitizeHtml(html || ""));
         setFallbackText(summary || "README 데이터를 찾을 수 없습니다.");
         setKoDescription(koDesc || repo.description || "설명이 없습니다.");
@@ -337,229 +330,230 @@ export default function RepoDetailModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-2xl max-h-[92vh] overflow-hidden rounded-3xl border border-gray-700 bg-[#0d1117] shadow-2xl flex flex-col"
+        className="relative w-full max-w-6xl max-h-[92vh] overflow-hidden rounded-3xl border border-gray-700 bg-[#0d1117] shadow-2xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* ── 헤더 ── */}
-        <div className="flex items-start justify-between gap-4 p-5 border-b border-gray-800 shrink-0">
-          <div className="min-w-0 flex-1">
-            {/* 오너 프로필 (클릭 시 팝업) */}
-            <div className="relative inline-block mb-2">
-              <button
-                className="flex items-center gap-2 hover:opacity-80 transition"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowOwnerProfile((v) => !v);
+        <div className="flex min-h-0 flex-1">
+          <div className={`min-h-0 flex-1 flex flex-col ${isCommentsOpen ? "lg:border-r lg:border-gray-800" : ""}`}>
+            {/* ── 헤더 ── */}
+            <div className="flex items-start justify-between gap-4 p-5 border-b border-gray-800 shrink-0">
+              <div className="min-w-0 flex-1">
+                <div className="relative inline-block mb-2">
+                  <button
+                    className="flex items-center gap-2 hover:opacity-80 transition"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowOwnerProfile((v) => !v);
+                    }}
+                  >
+                    <img
+                      src={avatarUrl}
+                      alt={owner}
+                      className="w-8 h-8 rounded-full border border-gray-600"
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                    <div className="text-left">
+                      <p className="text-xs text-gray-400">@{owner}</p>
+                      <h2 className="text-xl font-bold text-white leading-tight truncate max-w-xs">
+                        {repo.name}
+                      </h2>
+                    </div>
+                  </button>
+
+                  {showOwnerProfile && (
+                    <OwnerProfilePopup
+                      login={owner}
+                      avatarUrl={avatarUrl}
+                      onClose={() => setShowOwnerProfile(false)}
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2 text-xs font-bold text-gray-300">
+                  <span className="flex items-center gap-1">
+                    <Star className="w-3.5 h-3.5 text-yellow-400" />
+                    {(repo.stargazers_count / 1000).toFixed(1)}k
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <GitFork className="w-3.5 h-3.5" />
+                    {repo.forks_count}
+                  </span>
+                  {repo.language && (
+                    <span className="text-purple-400 border border-purple-400/30 px-2 py-0.5 rounded">
+                      {repo.language}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsKorean(!isKorean);
+                  }}
+                  className="flex items-center gap-1 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-gray-200 transition"
+                >
+                  <Languages className="w-3.5 h-3.5" />
+                  {isKorean ? "KR" : "EN"}
+                </button>
+
+                <button
+                  onClick={() => setIsCommentsOpen((prev) => !prev)}
+                  className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition ${
+                    isCommentsOpen
+                      ? "bg-purple-600 text-white"
+                      : "bg-white/10 text-gray-300"
+                  }`}
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  <span>{commentCount}</span>
+                </button>
+
+                <button
+                  onClick={handleToggleStar}
+                  className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition ${
+                    isStarred
+                      ? "bg-yellow-400/20 border border-yellow-400/50 text-yellow-400"
+                      : "bg-white/10 hover:bg-white/20 text-gray-300"
+                  }`}
+                >
+                  <Star
+                    className={`w-3.5 h-3.5 ${isStarred ? "fill-yellow-400" : ""}`}
+                  />
+                  {isStarred ? "Starred" : "Star"}
+                </button>
+
+                <button
+                  onClick={() => window.open(repo.html_url, "_blank")}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  GitHub
+                </button>
+
+                <button
+                  onClick={onClose}
+                  className="flex items-center justify-center w-9 h-9 rounded-full bg-gray-800 hover:bg-gray-700 transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <h3 className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                  <AlignLeft className="w-3 h-3" /> Description
+                </h3>
+                <p className="text-sm text-gray-300 leading-relaxed break-words">
+                  {displayDescription}
+                </p>
+              </div>
+
+              <div
+                className="bg-black/60 border border-gray-700 rounded-xl p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-900 transition"
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `git clone https://github.com/${repo.full_name}`,
+                  );
+                  alert("클론 명령어가 복사되었습니다!");
                 }}
               >
-                <img
-                  src={avatarUrl}
-                  alt={owner}
-                  className="w-8 h-8 rounded-full border border-gray-600"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-                <div className="text-left">
-                  <p className="text-xs text-gray-400">@{owner}</p>
-                  <h2 className="text-xl font-bold text-white leading-tight truncate max-w-xs">
-                    {repo.name}
-                  </h2>
-                </div>
-              </button>
-
-              {showOwnerProfile && (
-                <OwnerProfilePopup
-                  login={owner}
-                  avatarUrl={avatarUrl}
-                  onClose={() => setShowOwnerProfile(false)}
-                />
-              )}
-            </div>
-
-            {/* 통계 배지 */}
-            <div className="flex flex-wrap gap-2 text-xs font-bold text-gray-300">
-              <span className="flex items-center gap-1">
-                <Star className="w-3.5 h-3.5 text-yellow-400" />
-                {(repo.stargazers_count / 1000).toFixed(1)}k
-              </span>
-              <span className="flex items-center gap-1">
-                <GitFork className="w-3.5 h-3.5" />
-                {repo.forks_count}
-              </span>
-              {repo.language && (
-                <span className="text-purple-400 border border-purple-400/30 px-2 py-0.5 rounded">
-                  {repo.language}
-                </span>
-              )}
-            </div>
-          </div>
-
-          {/* 우측 액션 버튼들 */}
-          <div className="flex items-center gap-2 shrink-0">
-            {/* 번역 토글 */}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsKorean(!isKorean);
-              }}
-              className="flex items-center gap-1 px-3 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-gray-200 transition"
-            >
-              <Languages className="w-3.5 h-3.5" />
-              {isKorean ? "KR" : "EN"}
-            </button>
-
-            <button
-              onClick={() => setIsCommentsOpen(!isCommentsOpen)}
-              className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition ${
-                isCommentsOpen
-                  ? "bg-purple-600 text-white"
-                  : "bg-white/10 text-gray-300"
-              }`}
-            >
-              <MessageCircle className="w-3.5 h-3.5" />
-              <span>{commentCount}</span>
-            </button>
-
-            {/* Star 버튼 */}
-            <button
-              onClick={handleToggleStar}
-              className={`flex items-center gap-1 px-3 py-2 rounded-xl text-xs font-bold transition ${
-                isStarred
-                  ? "bg-yellow-400/20 border border-yellow-400/50 text-yellow-400"
-                  : "bg-white/10 hover:bg-white/20 text-gray-300"
-              }`}
-            >
-              <Star
-                className={`w-3.5 h-3.5 ${isStarred ? "fill-yellow-400" : ""}`}
-              />
-              {isStarred ? "Starred" : "Star"}
-            </button>
-
-            {/* GitHub 이동 */}
-            <button
-              onClick={() => window.open(repo.html_url, "_blank")}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold transition"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              GitHub
-            </button>
-
-            {/* 닫기 */}
-            <button
-              onClick={onClose}
-              className="flex items-center justify-center w-9 h-9 rounded-full bg-gray-800 hover:bg-gray-700 transition"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* ── 콘텐츠 ── */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {/* Description */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-            <h3 className="text-[10px] font-bold text-blue-400 uppercase tracking-wider mb-2 flex items-center gap-1">
-              <AlignLeft className="w-3 h-3" /> Description
-            </h3>
-            <p className="text-sm text-gray-300 leading-relaxed break-words">
-              {displayDescription}
-            </p>
-          </div>
-
-          {/* Clone 커맨드 */}
-          <div
-            className="bg-black/60 border border-gray-700 rounded-xl p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-900 transition"
-            onClick={() => {
-              navigator.clipboard.writeText(
-                `git clone https://github.com/${repo.full_name}`,
-              );
-              alert("클론 명령어가 복사되었습니다!");
-            }}
-          >
-            <Terminal className="w-4 h-4 text-green-400 shrink-0" />
-            <code className="text-xs text-green-400 font-mono truncate">
-              git clone https://github.com/{repo.full_name}
-            </code>
-          </div>
-
-          {/* Topics */}
-          {repo.topics?.length > 0 && (
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-wider mb-3">
-                Topics
-              </h3>
-              <div className="flex flex-wrap gap-2">
-                {repo.topics.map((topic) => (
-                  <span
-                    key={topic}
-                    className="text-xs font-bold px-2.5 py-1 bg-white/5 border border-white/10 rounded text-gray-300"
-                  >
-                    #{topic}
-                  </span>
-                ))}
+                <Terminal className="w-4 h-4 text-green-400 shrink-0" />
+                <code className="text-xs text-green-400 font-mono truncate">
+                  git clone https://github.com/{repo.full_name}
+                </code>
               </div>
+
+              {repo.topics?.length > 0 && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                  <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-wider mb-3">
+                    Topics
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    {repo.topics.map((topic) => (
+                      <span
+                        key={topic}
+                        className="text-xs font-bold px-2.5 py-1 bg-white/5 border border-white/10 rounded text-gray-300"
+                      >
+                        #{topic}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-black/40 border border-white/10 rounded-2xl p-4">
+                <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-wider mb-3 flex items-center gap-1">
+                  <FileText className="w-3 h-3" /> README
+                </h3>
+
+                {loadingReadme ? (
+                  <div className="flex justify-center items-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
+                  </div>
+                ) : renderedHtml ? (
+                  <div
+                    className="readme-rendered text-gray-300 text-xs leading-relaxed break-words"
+                    dangerouslySetInnerHTML={{ __html: renderedHtml }}
+                  />
+                ) : (
+                  <pre className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
+                    {fallbackText || "README 없음"}
+                  </pre>
+                )}
+              </div>
+
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">
+                  Repo Info
+                </h3>
+                <div className="space-y-1.5 text-xs text-gray-300">
+                  <p>
+                    <span className="text-gray-500">Full name: </span>
+                    {repo.full_name}
+                  </p>
+                  <p>
+                    <span className="text-gray-500">Default branch: </span>
+                    {repo.default_branch || "main"}
+                  </p>
+                  <p>
+                    <span className="text-gray-500">Visibility: </span>
+                    {repo.private ? "Private" : "Public"}
+                  </p>
+                  <p>
+                    <span className="text-gray-500">License: </span>
+                    {repo.license?.spdx_id || "N/A"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {isCommentsOpen && (
+            <div className="hidden lg:flex lg:w-[360px] lg:min-h-0 lg:flex-col">
+              <CommentsPanel
+                repo={repo}
+                onClose={() => setIsCommentsOpen(false)}
+                onCountChange={(id, count) => setCommentCount(count)}
+              />
             </div>
           )}
-
-          {/* README Preview */}
-          <div className="bg-black/40 border border-white/10 rounded-2xl p-4">
-            <h3 className="text-[10px] font-bold text-purple-400 uppercase tracking-wider mb-3 flex items-center gap-1">
-              <FileText className="w-3 h-3" /> README
-            </h3>
-
-            {loadingReadme ? (
-              <div className="flex justify-center items-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
-              </div>
-            ) : renderedHtml ? (
-              <div
-                className="readme-rendered text-gray-300 text-xs leading-relaxed break-words"
-                dangerouslySetInnerHTML={{ __html: renderedHtml }}
-              />
-            ) : (
-              <pre className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
-                {fallbackText || "README 없음"}
-              </pre>
-            )}
-          </div>
-
-          {/* Repo Info */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-            <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-3">
-              Repo Info
-            </h3>
-            <div className="space-y-1.5 text-xs text-gray-300">
-              <p>
-                <span className="text-gray-500">Full name: </span>
-                {repo.full_name}
-              </p>
-              <p>
-                <span className="text-gray-500">Default branch: </span>
-                {repo.default_branch || "main"}
-              </p>
-              <p>
-                <span className="text-gray-500">Visibility: </span>
-                {repo.private ? "Private" : "Public"}
-              </p>
-              <p>
-                <span className="text-gray-500">License: </span>
-                {repo.license?.spdx_id || "N/A"}
-              </p>
-            </div>
-          </div>
         </div>
+
+        {isCommentsOpen && (
+          <div className="fixed inset-0 z-[60] bg-black/80 lg:hidden">
+            <CommentsPanel
+              repo={repo}
+              onClose={() => setIsCommentsOpen(false)}
+              onCountChange={(id, count) => setCommentCount(count)}
+            />
+          </div>
+        )}
       </div>
-      {/* 상세페이지용 댓글 패널 오버레이 또는 사이드 바 */}
-      {isCommentsOpen && (
-        <div className="w-full md:w-80 border-l border-gray-800 bg-black flex-shrink-0 p-4">
-          <CommentsPanel
-            repo={repo}
-            onClose={() => setIsCommentsOpen(false)}
-            onCountChange={(id, count) => setCommentCount(count)}
-          />
-        </div>
-      )}
     </div>
   );
 }

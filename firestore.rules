@@ -15,8 +15,11 @@ service cloud.firestore {
       return value == null || (value is string && value.size() <= maxLen);
     }
 
+    function isOptionalTimestamp(value) {
+      return value == null || value is timestamp;
+    }
+
     match /comments/{commentId} {
-      // [변경] 댓글 읽기는 비로그인도 허용 (피드/탐색 페이지 공개 접근 지원)
       allow read: if true;
 
       allow create: if isSignedIn()
@@ -27,7 +30,6 @@ service cloud.firestore {
           "displayName",
           "photoURL",
           "createdAt",
-          "replyCount",
           "clientRequestId"
         ])
         && isNonEmptyString(request.resource.data.repoId, 120)
@@ -36,23 +38,28 @@ service cloud.firestore {
         && isNonEmptyString(request.resource.data.displayName, 120)
         && isOptionalString(request.resource.data.photoURL, 500)
         && isOptionalString(request.resource.data.clientRequestId, 120)
-        && request.resource.data.replyCount is int
-        && request.resource.data.replyCount == 0;
+        && request.resource.data.createdAt is timestamp;
 
-      // 댓글 소유자만 삭제 가능
-      allow delete: if isSignedIn()
-        && resource.data.userId == request.auth.uid;
+      allow delete: if false;
 
       allow update: if isSignedIn()
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["replyCount"])
-        && request.resource.data.replyCount is int
-        && request.resource.data.replyCount >= 0;
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+          "text",
+          "deleted",
+          "deletedAt"
+        ])
+        && request.resource.data.text == ""
+        && request.resource.data.deleted == true
+        && resource.data.deleted != true
+        && isOptionalTimestamp(request.resource.data.deletedAt);
 
       match /replies/{replyId} {
-        // [변경] 답글 읽기도 비로그인 허용
         allow read: if true;
 
         allow create: if isSignedIn()
+          && exists(/databases/$(database)/documents/comments/$(commentId))
+          && get(/databases/$(database)/documents/comments/$(commentId)).data.deleted != true
           && request.resource.data.keys().hasOnly([
             "userId",
             "displayName",
@@ -65,9 +72,9 @@ service cloud.firestore {
           && isNonEmptyString(request.resource.data.displayName, 120)
           && isOptionalString(request.resource.data.photoURL, 500)
           && isNonEmptyString(request.resource.data.text, 1000)
-          && isOptionalString(request.resource.data.clientRequestId, 120);
+          && isOptionalString(request.resource.data.clientRequestId, 120)
+          && request.resource.data.createdAt is timestamp;
 
-        // 대댓글 삭제는 작성자 본인만 가능
         allow delete: if isSignedIn()
           && resource.data.userId == request.auth.uid;
 
@@ -75,7 +82,24 @@ service cloud.firestore {
       }
     }
 
-    // 그 외 모든 경로 차단
+    match /reports/{reportId} {
+      allow create: if isSignedIn()
+        && request.resource.data.keys().hasOnly([
+          "repoId",
+          "commentId",
+          "commentUserId",
+          "reporterUserId",
+          "createdAt"
+        ])
+        && isNonEmptyString(request.resource.data.repoId, 120)
+        && isNonEmptyString(request.resource.data.commentId, 160)
+        && isNonEmptyString(request.resource.data.commentUserId, 160)
+        && request.resource.data.reporterUserId == request.auth.uid
+        && request.resource.data.createdAt is timestamp;
+
+      allow read, update, delete: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -6,17 +6,51 @@ import React, {
   useRef,
   useState,
   useCallback,
+  useMemo,
 } from "react";
-import { Star, Share2, Code, MessageCircle } from "lucide-react";
+import {
+  Star,
+  Share2,
+  Code,
+  MessageCircle,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import ChortCard from "../Card/ChortCard";
 import CommentsPanel from "../Comments/CommentsPanel";
 import { useFeed } from "../../hooks/useFeed";
-import { starRepo, unstarRepo } from "../../api/github";
+import {
+  getStarredRepos,
+  invalidateStarredCache,
+  starRepo,
+  unstarRepo,
+} from "../../api/github";
 import { recordStar } from "../../utils/userProfile";
 import { LoginModalContext } from "../../App";
 
+const LANG_FILTERS = [
+  "전체",
+  "Python",
+  "TypeScript",
+  "Rust",
+  "Go",
+  "Java",
+  "C++",
+];
+const PERIOD_FILTERS = [
+  { label: "오늘", value: "daily" },
+  { label: "이번주", value: "weekly" },
+  { label: "이번달", value: "monthly" },
+];
+
 export default function Feed() {
-  const { repos, loading, error, fetchMore, resetFeed } = useFeed();
+  const [periodFilter, setPeriodFilter] = useState("daily");
+  const [langFilter, setLangFilter] = useState("전체");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const { repos, loading, error, fetchMore, resetFeed } = useFeed(
+    periodFilter,
+    langFilter,
+  );
   const { user, openLoginModal } = useContext(LoginModalContext);
 
   const [isCommentsOpen, setIsCommentsOpen] = useState(false);
@@ -26,29 +60,77 @@ export default function Feed() {
 
   const loaderRef = useRef(null);
   const feedScrollRef = useRef(null);
+  const lastTapRef = useRef({}); // 더블탭 감지용
+
+  const filteredRepos = useMemo(() => {
+    if (langFilter === "전체") return repos;
+    return repos.filter((repo) => repo.language === langFilter);
+  }, [langFilter, repos]);
+
+  const activeRepo = useMemo(() => {
+    return (
+      filteredRepos.find((repo) => repo.id === currentRepo?.id) ||
+      filteredRepos[0] ||
+      null
+    );
+  }, [currentRepo?.id, filteredRepos]);
 
   useEffect(() => {
-    const savedRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
-    const savedMap = {};
-    savedRepos.forEach((repo) => {
-      savedMap[repo.id] = true;
-    });
-    setStarredRepoIds(savedMap);
-  }, []);
+    let cancelled = false;
+
+    const syncStarred = async () => {
+      const localRepos = JSON.parse(localStorage.getItem("chort_saved")) || [];
+      const localMap = {};
+      localRepos.forEach((repo) => {
+        localMap[repo.id] = true;
+      });
+
+      if (!user) {
+        if (!cancelled) {
+          setStarredRepoIds(localMap);
+        }
+        return;
+      }
+
+      try {
+        const starred = await getStarredRepos();
+        if (cancelled) return;
+
+        const starredMap = {};
+        starred.forEach((repo) => {
+          starredMap[repo.id] = true;
+        });
+        localStorage.setItem("chort_saved", JSON.stringify(starred));
+        setStarredRepoIds(starredMap);
+      } catch (error) {
+        if (!cancelled) {
+          setStarredRepoIds(localMap);
+        }
+      }
+    };
+
+    syncStarred();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
-    if (repos.length === 0) return;
-
-    if (!currentRepo) {
-      setCurrentRepo(repos[0]);
+    if (filteredRepos.length === 0) {
+      setCurrentRepo(null);
       return;
     }
 
-    const stillExists = repos.some((repo) => repo.id === currentRepo.id);
-    if (!stillExists) {
-      setCurrentRepo(repos[0]);
+    if (!currentRepo) {
+      setCurrentRepo(filteredRepos[0]);
+      return;
     }
-  }, [repos, currentRepo]);
+
+    const stillExists = filteredRepos.some((repo) => repo.id === currentRepo.id);
+    if (!stillExists) {
+      setCurrentRepo(filteredRepos[0]);
+    }
+  }, [filteredRepos, currentRepo]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -65,16 +147,18 @@ export default function Feed() {
   }, [fetchMore, loading]);
 
   useEffect(() => {
-    if (!currentRepo || loading || error) return;
+    if (!activeRepo || loading || error) return;
 
-    const currentIndex = repos.findIndex((repo) => repo.id === currentRepo.id);
+    const currentIndex = filteredRepos.findIndex(
+      (repo) => repo.id === activeRepo.id,
+    );
     if (currentIndex < 0) return;
 
-    const remainingRepos = repos.length - currentIndex - 1;
+    const remainingRepos = filteredRepos.length - currentIndex - 1;
     if (remainingRepos <= 3) {
       fetchMore();
     }
-  }, [currentRepo, repos, loading, error, fetchMore]);
+  }, [activeRepo, filteredRepos, loading, error, fetchMore]);
 
   const handleCommentsCountChange = useCallback((repoId, count) => {
     setCommentCounts((prev) => {
@@ -85,7 +169,7 @@ export default function Feed() {
     });
   }, []);
 
-  const toggleStar = async (repo) => {
+  const toggleStar = useCallback(async (repo) => {
     if (!repo) return;
 
     // 로그인 확인
@@ -102,6 +186,7 @@ export default function Feed() {
       const success = await unstarRepo(repo.owner.login, repo.name);
 
       if (success) {
+        invalidateStarredCache();
         const newSaved = savedRepos.filter((r) => r.id !== repo.id);
         localStorage.setItem("chort_saved", JSON.stringify(newSaved));
       } else {
@@ -112,6 +197,7 @@ export default function Feed() {
       const success = await starRepo(repo.owner.login, repo.name);
 
       if (success) {
+        invalidateStarredCache();
         const savedRepos =
           JSON.parse(localStorage.getItem("chort_saved")) || [];
         const exists = savedRepos.some((r) => r.id === repo.id);
@@ -126,7 +212,7 @@ export default function Feed() {
         setStarredRepoIds((prev) => ({ ...prev, [repo.id]: false }));
       }
     }
-  };
+  }, [openLoginModal, starredRepoIds, user]);
 
   const handleShare = (repo) => {
     if (!repo) return;
@@ -135,30 +221,44 @@ export default function Feed() {
   };
 
   const handleCommentsOpen = (repo) => {
-    if (!user) {
-      openLoginModal("댓글을 보거나 작성하려면 GitHub 로그인이 필요합니다.");
-      return;
-    }
+    setCurrentRepo(repo);
     setIsCommentsOpen(true);
   };
 
   const goToNextRepo = useCallback(() => {
-    if (!currentRepo || repos.length === 0 || !feedScrollRef.current) return;
+    if (!activeRepo || filteredRepos.length === 0 || !feedScrollRef.current) {
+      return;
+    }
 
-    const currentIndex = repos.findIndex((repo) => repo.id === currentRepo.id);
+    const currentIndex = filteredRepos.findIndex(
+      (repo) => repo.id === activeRepo.id,
+    );
     if (currentIndex < 0) return;
 
     const nextIndex = currentIndex + 1;
-    if (nextIndex >= repos.length) return;
+    if (nextIndex >= filteredRepos.length) return;
 
     const nextElement = feedScrollRef.current.querySelector(
       `[data-feed-index="${nextIndex}"]`,
     );
     nextElement?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [currentRepo, repos]);
+  }, [activeRepo, filteredRepos]);
 
-  const isStarred = currentRepo ? !!starredRepoIds[currentRepo.id] : false;
-  const commentCount = currentRepo ? commentCounts[currentRepo.id] || 0 : 0;
+  const isStarred = activeRepo ? !!starredRepoIds[activeRepo.id] : false;
+
+  // 더블탭으로 Star 등록
+  const handleDoubleTap = useCallback(
+    (repo) => {
+      const now = Date.now();
+      const last = lastTapRef.current[repo.id] || 0;
+      if (now - last < 300) {
+        // 더블탭 감지 → Star 토글
+        toggleStar(repo);
+      }
+      lastTapRef.current[repo.id] = now;
+    },
+    [toggleStar],
+  );
 
   // 댓글 패널에서 발생한 갯수 변경을 Feed state에 즉시 반영하는 콜백
   const handleCommentsUpdate = useCallback((repoId, count) => {
@@ -169,131 +269,254 @@ export default function Feed() {
   }, []);
 
   return (
-    <div className="relative flex w-full h-full bg-black gap-0">
-      <div className="flex-1 flex justify-center" onClick={goToNextRepo}>
-        <div
-          ref={feedScrollRef}
-          className="w-full h-full max-w-[500px] overflow-y-scroll snap-y snap-mandatory border-r border-gray-800"
-          onClick={(e) => e.stopPropagation()}
+    <div className="relative flex h-full w-full min-w-0 overflow-x-hidden bg-black gap-0">
+      <div className="absolute left-4 top-4 z-30 flex flex-col items-start gap-3">
+        <button
+          onClick={() => setIsFilterOpen((prev) => !prev)}
+          className="flex items-center gap-2 rounded-full border border-white/10 bg-black/70 px-4 py-2 text-xs font-bold text-white backdrop-blur-md transition hover:bg-black/85"
         >
-          {repos.map((repo, index) => (
-            <div key={`${repo.id}-${index}`} data-feed-index={index}>
-              <ChortCard
-                repo={repo}
-                onVisible={setCurrentRepo}
-                onCommentsCountChange={handleCommentsCountChange}
-              />
-            </div>
-          ))}
+          {isFilterOpen ? <X className="h-4 w-4" /> : <SlidersHorizontal className="h-4 w-4" />}
+          필터
+        </button>
 
-          {error && (
-            <div className="h-20 flex flex-col items-center justify-center bg-black gap-2">
-              <p className="text-red-400 text-xs text-center px-4">{error}</p>
-              <button
-                onClick={resetFeed}
-                className="text-xs text-purple-400 underline"
-              >
-                다시 시도
-              </button>
+        {isFilterOpen && (
+          <div className="w-[min(320px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-black/80 p-4 backdrop-blur-md shadow-2xl">
+            <div className="mb-3">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                기간
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {PERIOD_FILTERS.map((p) => (
+                  <button
+                    key={p.value}
+                    onClick={() => setPeriodFilter(p.value)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold transition ${
+                      periodFilter === p.value
+                        ? "bg-purple-600 text-white"
+                        : "bg-white/10 text-gray-400 hover:bg-white/20"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          )}
 
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                언어
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {LANG_FILTERS.map((lang) => (
+                  <button
+                    key={lang}
+                    onClick={() => setLangFilter(lang)}
+                    className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition ${
+                      langFilter === lang
+                        ? "bg-blue-600 text-white"
+                        : "bg-white/10 text-gray-400 hover:bg-white/20"
+                    }`}
+                  >
+                    {lang}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="relative flex min-w-0 flex-1 overflow-hidden gap-0">
+        <div
+          className="flex min-w-0 flex-1 justify-center overflow-x-hidden"
+          onClick={goToNextRepo}
+        >
           <div
-            ref={loaderRef}
-            className="h-20 flex items-center justify-center bg-black"
+            ref={feedScrollRef}
+            className="h-full w-full min-w-0 max-w-[500px] overflow-x-hidden overflow-y-scroll snap-y snap-mandatory border-r border-gray-800"
+            onClick={(e) => e.stopPropagation()}
           >
-            {loading && !error && (
-              <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+            {filteredRepos.map((repo, index) => (
+              <div
+                key={`${repo.id}-${index}`}
+                data-feed-index={index}
+                onPointerDown={() => handleDoubleTap(repo)}
+              >
+                <ChortCard
+                  repo={repo}
+                  onVisible={setCurrentRepo}
+                  onCommentsCountChange={handleCommentsCountChange}
+                />
+              </div>
+            ))}
+
+            {error && (
+              <div className="h-20 flex flex-col items-center justify-center bg-black gap-2">
+                <p className="text-red-400 text-xs text-center px-4">{error}</p>
+                <button
+                  onClick={resetFeed}
+                  className="text-xs text-purple-400 underline"
+                >
+                  다시 시도
+                </button>
+              </div>
             )}
+
+            <div
+              ref={loaderRef}
+              className="h-20 flex items-center justify-center bg-black"
+            >
+              {loading && !error && (
+                <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+              )}
+            </div>
           </div>
         </div>
       </div>
-
-      {currentRepo && (
-        <div className="absolute left-[calc(50%+265px)] bottom-24 flex flex-col gap-5 items-center z-30">
-          {/* Star 버튼 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleStar(currentRepo);
-            }}
-            className="flex flex-col items-center transition-transform active:scale-90"
-          >
-            <div
-              className={`p-3 rounded-full backdrop-blur-md transition-all ${
-                isStarred
-                  ? "bg-yellow-400/20 border border-yellow-400/50"
-                  : "bg-black/50 border border-white/10"
-              }`}
+      {activeRepo && (
+        <>
+          <div className="absolute bottom-28 right-3 z-30 flex flex-col items-center gap-5 lg:hidden">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleStar(activeRepo);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
             >
               <Star
-                className={`w-6 h-6 ${
+                className={`h-7 w-7 drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)] ${
                   isStarred ? "fill-yellow-400 text-yellow-400" : "text-white"
                 }`}
               />
-            </div>
-            <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-              {(currentRepo.stargazers_count / 1000).toFixed(1)}k
-            </span>
-          </button>
+              <span className="mt-1 text-[10px] font-bold tracking-wider text-white">
+                {(activeRepo.stargazers_count / 1000).toFixed(1)}k
+              </span>
+            </button>
 
-          {/* 댓글 버튼 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleCommentsOpen(currentRepo);
-            }}
-            className="flex flex-col items-center transition-transform active:scale-90"
-          >
-            <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-              <MessageCircle className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-              {commentCounts[currentRepo.id] || 0}
-            </span>
-          </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCommentsOpen(activeRepo);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <MessageCircle className="h-7 w-7 text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]" />
+              <span className="mt-1 text-[10px] font-bold tracking-wider text-white">
+                {commentCounts[activeRepo.id] || 0}
+              </span>
+            </button>
 
-          {/* 공유 버튼 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleShare(currentRepo);
-            }}
-            className="flex flex-col items-center transition-transform active:scale-90"
-          >
-            <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-              <Share2 className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-              Share
-            </span>
-          </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleShare(activeRepo);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <Share2 className="h-7 w-7 text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]" />
+              <span className="mt-1 text-[10px] font-bold tracking-wider text-white">
+                Share
+              </span>
+            </button>
 
-          {/* GitHub 링크 버튼 */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              window.open(
-                `https://github.com/${currentRepo.full_name}`,
-                "_blank",
-              );
-            }}
-            className="flex flex-col items-center transition-transform active:scale-90"
-          >
-            <div className="p-3 bg-black/50 border border-white/10 rounded-full">
-              <Code className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-[10px] mt-1.5 font-bold tracking-wider text-white">
-              Repo
-            </span>
-          </button>
-        </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(
+                  `https://github.com/${activeRepo.full_name}`,
+                  "_blank",
+                );
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <Code className="h-7 w-7 text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.6)]" />
+              <span className="mt-1 text-[10px] font-bold tracking-wider text-white">
+                Repo
+              </span>
+            </button>
+          </div>
+
+          <div className="absolute bottom-24 z-30 hidden lg:flex lg:left-[calc(50%+265px)] lg:flex-col lg:items-center lg:gap-5">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleStar(activeRepo);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <div
+                className={`rounded-full p-3 backdrop-blur-md transition-all ${
+                  isStarred
+                    ? "border border-yellow-400/50 bg-yellow-400/20"
+                    : "border border-white/10 bg-black/50"
+                }`}
+              >
+                <Star
+                  className={`h-6 w-6 ${
+                    isStarred ? "fill-yellow-400 text-yellow-400" : "text-white"
+                  }`}
+                />
+              </div>
+              <span className="mt-1.5 text-[10px] font-bold tracking-wider text-white">
+                {(activeRepo.stargazers_count / 1000).toFixed(1)}k
+              </span>
+            </button>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCommentsOpen(activeRepo);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <div className="rounded-full border border-white/10 bg-black/50 p-3">
+                <MessageCircle className="h-6 w-6 text-white" />
+              </div>
+              <span className="mt-1.5 text-[10px] font-bold tracking-wider text-white">
+                {commentCounts[activeRepo.id] || 0}
+              </span>
+            </button>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleShare(activeRepo);
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <div className="rounded-full border border-white/10 bg-black/50 p-3">
+                <Share2 className="h-6 w-6 text-white" />
+              </div>
+              <span className="mt-1.5 text-[10px] font-bold tracking-wider text-white">
+                Share
+              </span>
+            </button>
+
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                window.open(
+                  `https://github.com/${activeRepo.full_name}`,
+                  "_blank",
+                );
+              }}
+              className="flex flex-col items-center transition-transform active:scale-90"
+            >
+              <div className="rounded-full border border-white/10 bg-black/50 p-3">
+                <Code className="h-6 w-6 text-white" />
+              </div>
+              <span className="mt-1.5 text-[10px] font-bold tracking-wider text-white">
+                Repo
+              </span>
+            </button>
+          </div>
+        </>
       )}
 
-      {isCommentsOpen && currentRepo && user && (
-        <div className="absolute top-0 right-0 h-full z-40">
+      {isCommentsOpen && activeRepo && (
+        <div className="absolute inset-0 z-40 lg:inset-y-0 lg:left-auto">
           <CommentsPanel
-            repo={currentRepo}
+            repo={activeRepo}
             onClose={() => setIsCommentsOpen(false)}
             onCountChange={handleCommentsUpdate} // 실시간 연동 핵심
           />

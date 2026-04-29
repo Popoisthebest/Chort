@@ -7,22 +7,46 @@ import { getSeenIds } from "../utils/userProfile";
 const PAGES_PER_BATCH = 3;
 const PREFETCH_ROUNDS = 4;
 
-export const useFeed = () => {
+export const useFeed = (periodFilter = "daily", languageFilter = "전체") => {
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const pageRef = useRef(1);
   const isFetchingRef = useRef(false);
+  const reposRef = useRef([]);
 
-  const fetchMore = useCallback(async () => {
+  const filtersRef = useRef({
+    period: periodFilter,
+    language: languageFilter,
+  });
+
+  useEffect(() => {
+    reposRef.current = repos;
+  }, [repos]);
+
+  useEffect(() => {
+    filtersRef.current = {
+      period: periodFilter,
+      language: languageFilter,
+    };
+  }, [periodFilter, languageFilter]);
+
+  const fetchMore = useCallback(async ({ reset = false } = {}) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     setLoading(true);
     setError(null);
 
     try {
-      const existingIds = new Set(repos.map((r) => r.id));
+      const activeFilters = filtersRef.current;
+      if (reset) {
+        pageRef.current = 1;
+      }
+
+      const existingIds = new Set(
+        reset ? [] : reposRef.current.map((repo) => repo.id),
+      );
       const seenIds = new Set(getSeenIds());
 
       let round = 0;
@@ -35,11 +59,13 @@ export const useFeed = () => {
           { length: PAGES_PER_BATCH },
           (_, i) => pageRef.current + i,
         );
-        const results = await getTrendingReposBatch(pageNumbers);
+        const results = await getTrendingReposBatch(pageNumbers, activeFilters);
         pageRef.current += PAGES_PER_BATCH;
         round += 1;
 
-        const validResults = results.filter((r) => Array.isArray(r) && !r?.error);
+        const validResults = results.filter(
+          (result) => Array.isArray(result) && !result?.error,
+        );
         if (validResults.length > 0) {
           sawApiData = true;
           merged = [...merged, ...validResults.flat()];
@@ -61,10 +87,22 @@ export const useFeed = () => {
         unseenFresh.length > 0
           ? unseenFresh
           : merged.filter((repo) => !existingIds.has(repo.id));
-      const ranked = rankRepos(candidates);
+      const ranked = rankRepos(candidates, activeFilters.period);
       setRepos((prev) => {
-        const existingIds = new Set(prev.map((r) => r.id));
-        return [...prev, ...ranked.filter((r) => !existingIds.has(r.id))];
+        if (reset) {
+          const deduped = [];
+          const nextIds = new Set();
+          ranked.forEach((repo) => {
+            if (!nextIds.has(repo.id)) {
+              nextIds.add(repo.id);
+              deduped.push(repo);
+            }
+          });
+          return deduped;
+        }
+
+        const prevIds = new Set(prev.map((repo) => repo.id));
+        return [...prev, ...ranked.filter((repo) => !prevIds.has(repo.id))];
       });
     } catch (err) {
       console.error("피드 로드 실패:", err);
@@ -75,17 +113,16 @@ export const useFeed = () => {
     }
   }, []);
 
-  // [버그수정] resetFeed: 초기화 후 fetchMore 자동 실행
   const resetFeed = useCallback(() => {
-    pageRef.current = 1;
-    setRepos([]);
     setError(null);
-    fetchMore();
+    setRepos([]);
+    fetchMore({ reset: true });
   }, [fetchMore]);
 
   useEffect(() => {
-    fetchMore();
-  }, [fetchMore]);
+    pageRef.current = 1;
+    resetFeed();
+  }, [periodFilter, languageFilter, resetFeed]);
 
   return { repos, loading, error, fetchMore, resetFeed };
 };

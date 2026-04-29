@@ -1,7 +1,3 @@
-// src/components/Card/ChortCard.js
-// [보안 수정] 커스텀 sanitizer → DOMPurify 교체
-// 설치: npm install dompurify
-// 설치: npm install --save-dev @types/dompurify  (TypeScript 사용 시)
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import DOMPurify from "dompurify";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
@@ -39,12 +35,7 @@ const setRepoCacheEntry = (repo, patch) => {
   repoDetailCache.set(key, { ...prev, ...patch });
 };
 
-// [보안 수정] 커스텀 sanitizer 제거 → DOMPurify 사용
-// DOMPurify는 OWASP 기준을 충족하는 검증된 라이브러리로,
-// data: URI, vbscript:, SVG foreignObject, CSS expression() 등
-// 커스텀 구현에서 놓칠 수 있는 모든 XSS 벡터를 처리함
 const DOMPURIFY_CONFIG = {
-  // 허용 태그를 README 렌더링에 필요한 것만으로 제한
   ALLOWED_TAGS: [
     "a",
     "b",
@@ -75,16 +66,12 @@ const DOMPURIFY_CONFIG = {
     "tr",
     "ul",
   ],
-  // 허용 속성을 최소화
   ALLOWED_ATTR: ["href", "title", "rel", "target"],
-  // javascript:, vbscript:, data: URI 등 위험한 프로토콜 차단
   ALLOW_DATA_ATTR: false,
   FORCE_BODY: true,
-  // a 태그 href에서 안전한 프로토콜만 허용
   ALLOWED_URI_REGEXP: /^https?:\/\//i,
 };
 
-// DOMPurify 훅: a 태그에 자동으로 target="_blank" rel="noreferrer noopener" 추가
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") {
     node.setAttribute("target", "_blank");
@@ -219,7 +206,6 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         if (cancelled) return;
 
-        // [보안 수정] DOMPurify 기반 sanitize 적용
         const safeHtml = sanitizeRenderedHtml(html || "");
         const safeFallback = summaryText || "README 데이터를 찾을 수 없습니다.";
 
@@ -296,7 +282,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   return (
     <div
       ref={cardRef}
-      className="relative h-screen w-full snap-start bg-[#0d1117] flex flex-col overflow-hidden"
+      className="relative flex h-screen w-full min-w-0 max-w-full snap-start flex-col overflow-hidden bg-[#0d1117]"
     >
       <div className="absolute inset-0 opacity-20 pointer-events-none">
         <img
@@ -307,11 +293,11 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
         <div className="absolute inset-0 bg-gradient-to-b from-[#0d1117]/80 via-[#0d1117]/95 to-[#0d1117]" />
       </div>
 
-      <div className="relative z-10 flex flex-col h-full w-full pt-10 pb-10">
-        <div className="px-5 pb-4 shrink-0 flex justify-between items-start">
-          <div className="pr-10">
+      <div className="relative z-10 flex h-full w-full min-w-0 max-w-full flex-col pt-14 pb-24 sm:pt-10 sm:pb-10">
+        <div className="flex shrink-0 items-start justify-between px-4 pb-3 sm:px-5 sm:pb-4">
+          <div className="min-w-0 max-w-[calc(100%-64px)] sm:pr-10">
             <div
-              className="flex items-center gap-2 mb-2 cursor-pointer w-max"
+              className="mb-2 flex min-w-0 max-w-full items-center gap-2 cursor-pointer"
               onClick={(e) => {
                 e.stopPropagation();
                 window.open(repo.owner.html_url, "_blank");
@@ -319,14 +305,14 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
             >
               <img
                 src={repo.owner.avatar_url}
-                className="w-6 h-6 rounded-full border border-gray-600"
+                className="h-5 w-5 rounded-full border border-gray-600 sm:h-6 sm:w-6"
                 alt="avatar"
               />
-              <span className="font-semibold text-gray-400 text-xs tracking-wide">
+              <span className="truncate text-[11px] font-semibold tracking-wide text-gray-400 sm:text-xs">
                 @{repo.owner.login}
               </span>
             </div>
-            <h1 className="text-2xl font-black text-white leading-tight break-words">
+            <h1 className="min-w-0 max-w-full break-words text-lg font-black leading-tight text-white sm:text-2xl">
               {repo.name}
             </h1>
           </div>
@@ -336,71 +322,77 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
               e.stopPropagation();
               setIsKorean(!isKorean);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full text-xs font-bold text-gray-200 transition-colors shrink-0"
+            className="flex shrink-0 items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-1.5 text-[11px] font-bold text-gray-200 transition-colors hover:bg-white/20 sm:px-3 sm:text-xs"
             title="설명 언어 전환"
           >
-            <Languages className="w-4 h-4" />
+            <Languages className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             {isKorean ? "KR" : "EN"}
           </button>
         </div>
 
-        <div className="flex-1 overflow-hidden px-5 relative flex flex-col">
-          <div className="bg-white/5 border border-white/10 rounded-xl p-4 mb-4 backdrop-blur-sm shrink-0">
-            <h3 className="text-[10px] font-bold text-blue-400 mb-2 uppercase tracking-wider flex items-center gap-1">
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden px-4 sm:px-5">
+          <div className="mb-2.5 w-full min-w-0 max-w-full shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-2.5 backdrop-blur-sm sm:mb-4 sm:p-4">
+            <h3 className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-blue-400 sm:mb-2">
               <AlignLeft className="w-3 h-3" /> Description
             </h3>
-            <p className="text-gray-200 text-sm leading-relaxed break-keep line-clamp-3">
+            <p
+              className="block w-full min-w-0 max-w-full overflow-hidden whitespace-normal break-all text-[11px] leading-relaxed text-gray-200 sm:text-sm sm:break-words sm:line-clamp-3"
+              style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+            >
               {displayDescription}
             </p>
           </div>
 
           {readmeImage && (
-            <div className="mb-4 rounded-xl overflow-hidden border border-white/10 bg-black/50 flex justify-center shrink-0">
+            <div className="mb-2.5 flex shrink-0 justify-center overflow-hidden rounded-xl border border-white/10 bg-black/50 sm:mb-4">
               <img
                 src={readmeImage}
                 alt="Preview"
-                className="w-full h-auto max-h-32 object-contain"
+                className="h-auto max-h-20 w-full object-contain sm:max-h-32"
               />
             </div>
           )}
 
-          <div className="bg-black/40 border border-white/10 rounded-xl p-4 backdrop-blur-sm flex-1 overflow-hidden relative">
-            <h3 className="text-[10px] font-bold text-purple-400 mb-3 uppercase tracking-wider flex items-center gap-1">
+          <div className="relative min-h-0 w-full min-w-0 max-w-full flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/40 p-2.5 backdrop-blur-sm sm:p-4">
+            <h3 className="mb-1.5 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-purple-400 sm:mb-3">
               <FileText className="w-3 h-3" /> README Snippet
             </h3>
 
             {renderedReadmeHtml ? (
-              <div className="relative h-full overflow-hidden">
+              <div className="relative h-full min-w-0 max-w-full overflow-hidden">
                 <div
-                  className="readme-rendered text-gray-300 text-xs leading-relaxed break-words"
+                  className="readme-rendered min-w-0 max-w-full overflow-hidden break-words text-gray-300 text-[11px] leading-relaxed sm:text-xs"
                   dangerouslySetInnerHTML={{ __html: renderedReadmeHtml }}
                 />
               </div>
             ) : (
-              <div className="text-gray-300 text-xs leading-relaxed whitespace-pre-wrap break-words break-keep">
+              <div
+                className="block w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-all text-[11px] leading-relaxed text-gray-300 sm:text-xs"
+                style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+              >
                 {fallbackReadmeText || "README 불러오는 중..."}
               </div>
             )}
 
-            <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#151a22] to-transparent pointer-events-none rounded-b-xl flex items-end justify-center pb-2">
-              <span className="text-[10px] text-gray-500 font-semibold mb-1">
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 flex h-14 items-end justify-center rounded-b-xl bg-gradient-to-t from-[#151a22] to-transparent pb-1.5 sm:h-24 sm:pb-2">
+              <span className="mb-1 text-[10px] font-semibold text-gray-500">
                 ...Tap Repo to read more
               </span>
             </div>
           </div>
         </div>
 
-        <div className="px-5 shrink-0 pt-4 pr-20">
-          <div className="flex flex-wrap gap-2 mb-3">
+        <div className="shrink-0 px-4 pr-20 pt-2.5 sm:px-5 sm:pt-4 sm:pr-20">
+          <div className="mb-3 flex flex-wrap gap-1.5 sm:gap-2">
             {repo.language && (
-              <span className="text-[10px] font-bold px-2 py-1 bg-blue-500/20 border border-blue-500/30 rounded text-blue-400">
+              <span className="rounded border border-blue-500/30 bg-blue-500/20 px-2 py-1 text-[10px] font-bold text-blue-400">
                 {repo.language}
               </span>
             )}
             {repo.topics?.slice(0, 3).map((topic) => (
               <span
                 key={topic}
-                className="text-[10px] font-bold px-2 py-1 bg-white/5 border border-white/10 rounded text-gray-400"
+                className="rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-bold text-gray-400"
               >
                 #{topic}
               </span>
@@ -408,7 +400,7 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           </div>
 
           <div
-            className="bg-black/80 border border-gray-700 rounded-lg p-3 flex items-center gap-3 cursor-pointer hover:bg-gray-900 transition"
+            className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-700 bg-black/80 p-2 transition hover:bg-gray-900 sm:gap-3 sm:p-3"
             onClick={(e) => {
               e.stopPropagation();
               navigator.clipboard.writeText(
@@ -417,8 +409,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
               alert("클론 명령어가 복사되었습니다!");
             }}
           >
-            <Terminal className="w-4 h-4 text-green-400 shrink-0" />
-            <code className="text-xs text-green-400 font-mono truncate">
+            <Terminal className="h-4 w-4 shrink-0 text-green-400" />
+            <code className="min-w-0 truncate text-[11px] font-mono text-green-400 sm:text-xs">
               git clone https://github.com/{repo.full_name}
             </code>
           </div>

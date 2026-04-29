@@ -42,14 +42,18 @@ export const recordView = (inputRepo, dwellMs = 0) => {
 
   const languageKey = normalizeInterestKey(repo.language);
   if (languageKey) {
-    const weight = dwellMs > 5000 ? 2 : 1;
+    // 체류 시간 4단계 세분화: 3초 미만=1, 3~10초=1.5, 10~30초=2.5, 30초 이상=4
+    const weight =
+      dwellMs >= 30000 ? 4 : dwellMs >= 10000 ? 2.5 : dwellMs >= 3000 ? 1.5 : 1;
     addWeightedInterest(profile.languages, languageKey, weight);
   }
 
   if (repo.topics?.length > 0) {
+    const topicWeight =
+      dwellMs >= 30000 ? 3 : dwellMs >= 10000 ? 2 : dwellMs >= 3000 ? 1.5 : 1;
     repo.topics.forEach((topic) => {
       const topicKey = normalizeInterestKey(topic);
-      addWeightedInterest(profile.topics, topicKey, 1);
+      addWeightedInterest(profile.topics, topicKey, topicWeight);
     });
   }
 

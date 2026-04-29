@@ -414,9 +414,9 @@ export default function Explore() {
   }, [profileVersion]);
 
   return (
-    <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
+    <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-20 lg:pb-16">
       {/* ── 검색 헤더 ── */}
-      <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20 border-b border-gray-800">
+      <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md px-4 py-4 sm:p-6 z-20 border-b border-gray-800">
         <div className="flex items-center gap-3 mb-4">
           {hasSearched && (
             <button
@@ -427,7 +427,7 @@ export default function Explore() {
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
-          <h1 className="text-3xl font-bold">Explore</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Explore</h1>
         </div>
 
         <form onSubmit={handleSearch} className="relative">
@@ -446,7 +446,7 @@ export default function Explore() {
       </div>
 
       {/* ── 콘텐츠 ── */}
-      <div className="flex-1 overflow-y-auto px-6 pb-6">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 sm:px-6">
         {/* 추천 탭 */}
         {!hasSearched && (
           <div className="mt-4 space-y-8">
@@ -491,7 +491,7 @@ export default function Explore() {
                 </div>
               ) : (
                 <>
-                  <div className="columns-2 gap-4 [column-fill:_balance]">
+                  <div className="columns-1 gap-4 sm:columns-2 [column-fill:_balance]">
                     {recommendedRepos.map((repo, index) => (
                       <RepoCard
                         key={repo.id}

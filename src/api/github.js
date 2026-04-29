@@ -13,6 +13,8 @@ const inflightRequests = new Map();
 
 const now = () => Date.now();
 const buildCacheKey = (key) => `${CACHE_PREFIX}${key}`;
+const normalizeTrendingLanguage = (language = "전체") =>
+  String(language || "전체").trim() || "전체";
 
 const getHeaders = ({
   accept = "application/vnd.github+json",
@@ -286,15 +288,32 @@ export const invalidateStarredCache = () => {
   }
 };
 
-export const getTrendingRepos = async (page = 1) => {
+const getTrendingWindowDays = (period = "daily") => {
+  if (period === "monthly") return 30;
+  if (period === "weekly") return 7;
+  return 1;
+};
+
+export const getTrendingRepos = async (
+  page = 1,
+  filters = { period: "daily", language: "전체" },
+) => {
+  const period = filters?.period || "daily";
+  const language = normalizeTrendingLanguage(filters?.language);
   const date = new Date();
-  date.setDate(date.getDate() - 7);
+  date.setDate(date.getDate() - getTrendingWindowDays(period));
   const formattedDate = date.toISOString().split("T")[0];
-  const q = `created:>${formattedDate}`;
+  const qParts = [`created:>${formattedDate}`];
+
+  if (language !== "전체") {
+    qParts.push(`language:"${language.replace(/"/g, '\\"')}"`);
+  }
+
+  const q = qParts.join(" ");
   const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&sort=stars&order=desc&per_page=10&page=${page}`;
 
   return cachedRequest(
-    `trending:${page}:${formattedDate}`,
+    `trending:${page}:${period}:${language}:${formattedDate}`,
     async () => {
       const response = await fetch(url, { headers: getHeaders() });
       const data = await response.json();
@@ -313,8 +332,11 @@ export const getTrendingRepos = async (page = 1) => {
   );
 };
 
-export const getTrendingReposBatch = async (pages = [1, 2, 3]) => {
-  return Promise.all(pages.map((page) => getTrendingRepos(page)));
+export const getTrendingReposBatch = async (
+  pages = [1, 2, 3],
+  filters = { period: "daily", language: "전체" },
+) => {
+  return Promise.all(pages.map((page) => getTrendingRepos(page, filters)));
 };
 
 export const searchRepos = async (keyword) => {

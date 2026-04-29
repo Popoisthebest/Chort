@@ -14,15 +14,29 @@ const getSeenPenalty = (seenIndex) => {
 };
 
 // [개선] seen 위치 조회를 위해 Array 대신 Map 전달
-export const scoreRepo = (inputRepo, profile, seenIndexMap) => {
+// trendingPeriod: "daily" | "weekly" | "monthly" (기본 "daily")
+export const scoreRepo = (
+  inputRepo,
+  profile,
+  seenIndexMap,
+  trendingPeriod = "daily",
+) => {
   const repo = normalizeRepo(inputRepo);
 
   const stars = repo.stargazers_count || 0;
   const createdAt = new Date(repo.created_at || Date.now());
-  const ageInDays = Math.max(
+  const rawAgeInDays = Math.max(
     1,
     (Date.now() - createdAt) / (1000 * 60 * 60 * 24),
   );
+  // GitHub trending 기간에 따라 최신성 가중치 조정
+  const periodMultiplier =
+    trendingPeriod === "monthly"
+      ? 0.5
+      : trendingPeriod === "weekly"
+        ? 0.75
+        : 1.0;
+  const ageInDays = rawAgeInDays * (1 / periodMultiplier);
   const trendingScore = stars / Math.log(ageInDays + 2);
 
   const languageKey = normalizeInterestKey(repo.language);
@@ -43,7 +57,7 @@ export const scoreRepo = (inputRepo, profile, seenIndexMap) => {
   return trendingScore * langBoost * topicBoost * seenPenalty;
 };
 
-export const rankRepos = (repos) => {
+export const rankRepos = (repos, trendingPeriod = "daily") => {
   const profile = getProfile();
   const seenIds = getSeenIds(); // localStorage 1회만 읽기
   const seenIndexMap = new Map(seenIds.map((id, index) => [id, index]));
@@ -53,7 +67,7 @@ export const rankRepos = (repos) => {
       const normalizedRepo = normalizeRepo(repo);
       return {
         repo: normalizedRepo,
-        score: scoreRepo(normalizedRepo, profile, seenIndexMap),
+        score: scoreRepo(normalizedRepo, profile, seenIndexMap, trendingPeriod),
       };
     })
     .filter(({ score }) => score >= 0)

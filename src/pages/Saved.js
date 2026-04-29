@@ -139,35 +139,19 @@ export default function Saved() {
     setLoading(true);
 
     try {
-      // 1. GitHub API starred 목록 가져오기
       const ghStarred = await getStarredRepos();
-
-      // 2. 현재 localStorage 목록
-      const local = JSON.parse(localStorage.getItem("chort_saved")) || [];
-
-      // 3. GitHub starred를 기준으로 병합
-      //    GitHub에 있는 것은 모두 포함, 없는 것은 제거
-      const merged = [];
+      const synced = [];
       const seen = new Set();
 
-      // GitHub starred 전체 추가
       for (const repo of ghStarred) {
         if (!seen.has(repo.id)) {
           seen.add(repo.id);
-          merged.push(repo);
+          synced.push(repo);
         }
       }
 
-      // localStorage에만 있는 레포도 유지 (오프라인 등 경우)
-      for (const repo of local) {
-        if (!seen.has(repo.id)) {
-          seen.add(repo.id);
-          merged.push(repo);
-        }
-      }
-
-      localStorage.setItem("chort_saved", JSON.stringify(merged));
-      setSavedRepos(merged);
+      localStorage.setItem("chort_saved", JSON.stringify(synced));
+      setSavedRepos(synced);
     } catch (err) {
       console.error("starred 동기화 실패:", err);
       // 실패 시 localStorage 그대로 사용
@@ -250,11 +234,11 @@ export default function Saved() {
   }
 
   return (
-    <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-16">
+    <div className="w-full h-screen bg-gray-900 text-white flex flex-col relative pb-20 lg:pb-16">
       {/* 헤더 */}
-      <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md p-6 z-20 flex justify-between items-center">
+      <div className="sticky top-0 bg-gray-900/90 backdrop-blur-md px-4 py-4 sm:p-6 z-20 flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
         <div>
-          <h1 className="text-3xl font-bold">Saved</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Saved</h1>
           <p className="text-gray-400 text-sm mt-1">내가 Star한 레포지토리</p>
         </div>
         <button
@@ -267,7 +251,7 @@ export default function Saved() {
         </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 pb-6">
+      <div className="flex-1 overflow-y-auto px-4 pb-6 sm:px-6">
         {loading && savedRepos.length === 0 ? (
           <div className="flex justify-center items-center mt-32">
             <div className="w-8 h-8 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
