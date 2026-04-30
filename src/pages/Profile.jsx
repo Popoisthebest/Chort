@@ -1,4 +1,4 @@
-// src/pages/Profile.js
+// src/pages/Profile.jsx
 import React, { useState, useEffect, useContext } from "react";
 import {
   User,

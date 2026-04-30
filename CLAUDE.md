@@ -5,14 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm start          # Development server (http://localhost:3000)
+npm start          # Vite development server
 npm run build      # Production build
+npm run preview    # Preview the production build locally
 npm test           # Run tests in watch mode
+npm run test:ci    # Run tests once
+npm run lint       # Run ESLint
 ```
 
 ## Architecture Overview
 
-**Chort** is a GitHub trending discovery app built with React (CRA) + Firebase + GitHub API.
+**Chort** is a GitHub trending discovery app built with React + Vite + Firebase + GitHub API.
 
 ### Tech Stack
 - React 19, react-router-dom (v7)
@@ -29,14 +32,14 @@ src/
 ├── hooks/         # Custom hooks (useFeed.js)
 ├── pages/         # Route pages (Home, Login, Explore, Saved, Profile)
 ├── utils/         # Helpers (algorithm.js, userProfile.js, normalizers.js, formatters.js)
-└── App.js         # Router + auth state management
+└── App.jsx        # Router + auth state management
 ```
 
 ### Key Flows
 
 **Authentication**
 - GitHub OAuth via Firebase popup login
-- Access token stored in memory + localStorage (uid-bound) for GitHub API calls
+- Access token stored in memory + sessionStorage (uid-bound) for GitHub API calls
 - Token cleared on logout; profile cached in sessionStorage
 
 **Feed System (useFeed hook)**
@@ -57,11 +60,13 @@ src/
 
 **Comments (Firestore)**
 - Nested structure: `comments/{id}/replies`
+- Firestore reads are query-limited and indexed for repo/user comment views
 - Owner validation on delete (client + Firestore rules)
 - Comment count cached in sessionStorage (2min TTL)
 
 ### Security Notes
 - DOMPurify sanitizes rendered README HTML (OWASP-compliant)
-- GitHub token stored with uid-binding to prevent cross-user leakage
+- GitHub token is session-scoped with uid-binding to reduce persistent-token exposure
+- Firebase App Check can be enabled with `REACT_APP_FIREBASE_APPCHECK_SITE_KEY`
 - Error messages from APIs are not exposed to users (logged only)
 - `dangerouslySetInnerHTML` only used after DOMPurify sanitization

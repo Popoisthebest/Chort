@@ -1,5 +1,6 @@
 // src/api/firebase.js
 import { initializeApp } from "firebase/app";
+import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 import {
   getAuth,
   GithubAuthProvider,
@@ -20,17 +21,21 @@ import {
   onSnapshot,
   getCountFromServer,
   updateDoc,
+  orderBy,
+  limit as queryLimit,
 } from "firebase/firestore";
 import { safeToDate } from "../utils/formatters";
 
+const firebaseEnv = import.meta.env;
+
 const firebaseConfig = {
-  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.REACT_APP_FIREBASE_APP_ID,
-  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID,
+  apiKey: firebaseEnv.REACT_APP_FIREBASE_API_KEY,
+  authDomain: firebaseEnv.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: firebaseEnv.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: firebaseEnv.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: firebaseEnv.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: firebaseEnv.REACT_APP_FIREBASE_APP_ID,
+  measurementId: firebaseEnv.REACT_APP_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
@@ -40,20 +45,35 @@ const dbInstance = getFirestore(app);
 export const auth = authInstance;
 export const db = dbInstance;
 
+const appCheckSiteKey = firebaseEnv.REACT_APP_FIREBASE_APPCHECK_SITE_KEY;
+if (typeof window !== "undefined" && appCheckSiteKey) {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaV3Provider(appCheckSiteKey),
+    isTokenAutoRefreshEnabled: true,
+  });
+}
+
 const githubProvider = new GithubAuthProvider();
 githubProvider.addScope("public_repo");
 
-// GitHub OAuth access token: 메모리 + localStorage(uid 바인딩)
+// GitHub OAuth access token: 메모리 + sessionStorage(uid 바인딩)
 // Firebase 세션은 브라우저에 지속되지만, 팝업 로그인 시에만 credential이 오므로
-// 토큰을 uid와 함께 저장해 재방문/새로고침 후에도 Star 등 GitHub API가 동작하게 함
-// (XSS 시 노출 위험은 있으므로 스크립트 주입 방지가 중요)
+// 토큰은 현재 탭 세션 안에서만 유지한다. 장기 localStorage 저장은 XSS 시 피해가 커진다.
 let _githubTokenInMemory = null;
 
 const GITHUB_OAUTH_TOKEN_KEY = "chort_github_oauth";
 
+const clearLegacyStoredGithubOAuth = () => {
+  try {
+    localStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+};
+
 const loadStoredGithubOAuth = () => {
   try {
-    const raw = localStorage.getItem(GITHUB_OAUTH_TOKEN_KEY);
+    const raw = sessionStorage.getItem(GITHUB_OAUTH_TOKEN_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed?.token || !parsed?.uid) return null;
@@ -66,7 +86,7 @@ const loadStoredGithubOAuth = () => {
 const persistGithubOAuth = (token, uid) => {
   _githubTokenInMemory = token;
   try {
-    localStorage.setItem(
+    sessionStorage.setItem(
       GITHUB_OAUTH_TOKEN_KEY,
       JSON.stringify({ token, uid }),
     );
@@ -78,13 +98,16 @@ const persistGithubOAuth = (token, uid) => {
 const clearGithubOAuth = () => {
   _githubTokenInMemory = null;
   try {
-    localStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
+    sessionStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
+    clearLegacyStoredGithubOAuth();
   } catch {
     // ignore
   }
 };
 
 const syncGithubTokenForUser = (user) => {
+  clearLegacyStoredGithubOAuth();
+
   if (!user) {
     clearGithubOAuth();
     return;
@@ -101,7 +124,7 @@ const syncGithubTokenForUser = (user) => {
   const stored = loadStoredGithubOAuth();
   if (stored && stored.uid !== user.uid) {
     try {
-      localStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
+      sessionStorage.removeItem(GITHUB_OAUTH_TOKEN_KEY);
     } catch {
       // ignore
     }
@@ -123,6 +146,10 @@ auth.onAuthStateChanged((user) => {
 const GITHUB_PROFILE_KEY = "github_profile";
 const COMMENT_COUNT_CACHE_PREFIX = "chort_comment_count:";
 const COMMENT_COUNT_TTL = 1000 * 60 * 2;
+const MAX_COMMENTS_PER_REPO = 50;
+const MAX_REPLIES_PER_COMMENT = 50;
+const MAX_MY_COMMENTS = 100;
+const MAX_COMMENT_COUNT_SCAN = 1000;
 
 const trimText = (value) => {
   if (typeof value !== "string") return "";
@@ -154,7 +181,9 @@ const getRepliesCollection = (commentId) =>
 
 const getReplyCount = async (commentId) => {
   try {
-    const countSnapshot = await getCountFromServer(getRepliesCollection(commentId));
+    const countSnapshot = await getCountFromServer(
+      query(getRepliesCollection(commentId), queryLimit(MAX_REPLIES_PER_COMMENT)),
+    );
     return Math.max(0, Number(countSnapshot.data()?.count) || 0);
   } catch (error) {
     console.error("답글 수 집계 에러:", error.code || "unknown");
@@ -415,7 +444,12 @@ export const getGithubToken = () => {
 export const getComments = async (repoId) => {
   try {
     const commentsRef = collection(db, "comments");
-    const q = query(commentsRef, where("repoId", "==", String(repoId)));
+    const q = query(
+      commentsRef,
+      where("repoId", "==", String(repoId)),
+      orderBy("createdAt", "desc"),
+      queryLimit(MAX_COMMENTS_PER_REPO),
+    );
     const querySnapshot = await getDocs(q);
 
     const comments = (
@@ -440,8 +474,21 @@ export const getCommentCount = async (repoId) => {
     return cached;
   }
 
-  const comments = await getComments(repoId);
-  return getTotalCommentCount(comments);
+  try {
+    const commentsRef = collection(db, "comments");
+    const q = query(
+      commentsRef,
+      where("repoId", "==", String(repoId)),
+      queryLimit(MAX_COMMENT_COUNT_SCAN),
+    );
+    const countSnapshot = await getCountFromServer(q);
+    const count = Math.max(0, Number(countSnapshot.data()?.count) || 0);
+    setCommentCountCache(repoId, count);
+    return count;
+  } catch (error) {
+    console.error("댓글 수 집계 에러:", error.code || "unknown");
+    return 0;
+  }
 };
 
 export const addComment = async (repoId, text, user, clientRequestId) => {
@@ -547,7 +594,11 @@ export const addReply = async (commentId, text, user, clientRequestId) => {
 export const getReplies = async (commentId) => {
   try {
     const repliesRef = getRepliesCollection(commentId);
-    const q = query(repliesRef);
+    const q = query(
+      repliesRef,
+      orderBy("createdAt", "asc"),
+      queryLimit(MAX_REPLIES_PER_COMMENT),
+    );
     const querySnapshot = await getDocs(q);
 
     return querySnapshot.docs
@@ -605,7 +656,12 @@ export const getMyComments = async (userId) => {
   if (!userId) return [];
   try {
     const commentsRef = collection(db, "comments");
-    const q = query(commentsRef, where("userId", "==", userId));
+    const q = query(
+      commentsRef,
+      where("userId", "==", userId),
+      orderBy("createdAt", "desc"),
+      queryLimit(MAX_MY_COMMENTS),
+    );
     const snapshot = await getDocs(q);
     const comments = (
       await Promise.all(snapshot.docs.map((snap) => toCommentModel(snap)))
@@ -623,7 +679,8 @@ export const reportComment = async (comment, user) => {
   if (!comment?.id || !user?.uid) return false;
 
   try {
-    const reportRef = doc(collection(db, "reports"));
+    const reportId = `${String(comment.id).replace(/[^A-Za-z0-9_.-]/g, "_")}_${user.uid}`;
+    const reportRef = doc(db, "reports", reportId);
     await setDoc(reportRef, {
       repoId: String(comment.repoId || ""),
       commentId: String(comment.id),
@@ -641,7 +698,12 @@ export const reportComment = async (comment, user) => {
 // 댓글 실시간 구독 함수 추가
 export const subscribeComments = (repoId, callback) => {
   const commentsRef = collection(db, "comments");
-  const q = query(commentsRef, where("repoId", "==", String(repoId)));
+  const q = query(
+    commentsRef,
+    where("repoId", "==", String(repoId)),
+    orderBy("createdAt", "desc"),
+    queryLimit(MAX_COMMENTS_PER_REPO),
+  );
 
   return onSnapshot(
     q,

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import {
@@ -11,6 +10,7 @@ import {
 } from "../../api/github";
 import { getCommentCount, getGithubToken } from "../../api/firebase";
 import { recordView } from "../../utils/userProfile";
+import { sanitizeRenderedHtml } from "../../utils/sanitize";
 
 const repoDetailCache = new Map();
 
@@ -35,60 +35,6 @@ const setRepoCacheEntry = (repo, patch) => {
   const key = getRepoCacheKey(repo);
   const prev = getInitialCacheEntry(repo);
   repoDetailCache.set(key, { ...prev, ...patch });
-};
-
-const DOMPURIFY_CONFIG = {
-  ALLOWED_TAGS: [
-    "a",
-    "b",
-    "blockquote",
-    "br",
-    "code",
-    "del",
-    "em",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "hr",
-    "i",
-    "li",
-    "ol",
-    "p",
-    "pre",
-    "s",
-    "strong",
-    "table",
-    "tbody",
-    "td",
-    "th",
-    "thead",
-    "tr",
-    "ul",
-  ],
-  ALLOWED_ATTR: ["href", "title", "rel", "target"],
-  ALLOW_DATA_ATTR: false,
-  FORCE_BODY: true,
-  ALLOWED_URI_REGEXP: /^https?:\/\//i,
-};
-
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noreferrer noopener");
-  }
-});
-
-const sanitizeRenderedHtml = (html) => {
-  if (!html || typeof window === "undefined") return "";
-  try {
-    return DOMPurify.sanitize(html, DOMPURIFY_CONFIG);
-  } catch (error) {
-    console.error("README HTML sanitize 에러:", error.message);
-    return "";
-  }
 };
 
 const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {

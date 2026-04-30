@@ -1,4 +1,4 @@
-// src/components/Layout/SideNav.js
+// src/components/Layout/SideNav.jsx
 import React from "react";
 import { Home, Compass, Bookmark, User, LogOut, LogIn } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
@@ -17,9 +17,6 @@ export default function SideNav({
   openLoginModal,
 }) {
   const navigate = useNavigate();
-
-  // 공개 접근 가능한 경로
-  const publicPaths = ["/", "/explore"];
 
   const navItems = [
     { icon: Home, label: "홈", path: "/", requiresAuth: false },

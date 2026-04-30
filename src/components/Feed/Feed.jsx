@@ -1,4 +1,4 @@
-// src/components/Feed/Feed.js
+// src/components/Feed/Feed.jsx
 
 import React, {
   useContext,

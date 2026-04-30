@@ -1,8 +1,7 @@
-// src/components/Auth/LoginModal.js
+// src/components/Auth/LoginModal.jsx
 import React from "react";
 import { X } from "lucide-react";
 import { loginWithGithub } from "../../api/firebase";
-import { useNavigate } from "react-router-dom";
 
 const GithubLogo = ({ className }) => (
   <svg
@@ -23,8 +22,6 @@ const GithubLogo = ({ className }) => (
  * @param {function} onLoginSuccess - 로그인 성공 후 콜백 (선택)
  */
 export default function LoginModal({ message, onClose, onLoginSuccess }) {
-  const navigate = useNavigate();
-
   const handleLogin = async () => {
     try {
       const user = await loginWithGithub();
@@ -37,11 +34,6 @@ export default function LoginModal({ message, onClose, onLoginSuccess }) {
     } catch (error) {
       console.error("로그인 중 에러:", error);
     }
-  };
-
-  const handleGoToLogin = () => {
-    onClose();
-    navigate("/login");
   };
 
   return (

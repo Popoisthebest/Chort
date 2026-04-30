@@ -1,4 +1,4 @@
-// src/components/Comments/CommentsPanel.js
+// src/components/Comments/CommentsPanel.jsx
 import React, {
   useState,
   useEffect,

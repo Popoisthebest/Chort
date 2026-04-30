@@ -1,4 +1,4 @@
-// src/pages/Explore.js
+// src/pages/Explore.jsx
 import React, {
   useEffect,
   useMemo,
@@ -391,6 +391,7 @@ export default function Explore() {
   }, []);
 
   const personalizedTopics = useMemo(() => {
+    void profileVersion;
     const profile = getProfile();
     const topicEntries = Object.entries(profile.topics || {})
       .sort((a, b) => b[1] - a[1])

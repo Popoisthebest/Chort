@@ -23,7 +23,7 @@ const getHeaders = ({
   const token = getGithubToken();
   const headers = { Accept: accept };
   if (contentType) headers["Content-Type"] = contentType;
-  if (token) headers.Authorization = `token ${token}`;
+  if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 };
 
@@ -246,7 +246,7 @@ export const getStarredRepos = async () => {
       let page = 1;
       const perPage = 100;
 
-      while (true) {
+      while (page <= 5) {
         try {
           const response = await fetch(
             `https://api.github.com/user/starred?per_page=${perPage}&page=${page}`,
@@ -268,8 +268,6 @@ export const getStarredRepos = async () => {
           if (!linkHeader || !linkHeader.includes('rel="next"')) break;
 
           page++;
-          // 최대 5페이지(500개)까지만 로드
-          if (page > 5) break;
         } catch (error) {
           console.error("Starred repos 페이지 로드 에러:", error);
           break;

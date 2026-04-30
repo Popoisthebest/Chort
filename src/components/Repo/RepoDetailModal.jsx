@@ -1,10 +1,9 @@
-// src/components/Repo/RepoDetailModal.js
+// src/components/Repo/RepoDetailModal.jsx
 // Explore 상세보기 & Saved 상세보기 공용 모달
 // - README 렌더링 (번역 포함)
 // - 프로필 클릭 → GitHub 프로필 정보 팝업
 // - Star/Unstar 지원
 import React, { useState, useEffect, useContext, useRef } from "react";
-import DOMPurify from "dompurify";
 import ReactMarkdown from "react-markdown";
 import {
   X,
@@ -36,59 +35,7 @@ import { LoginModalContext } from "../../App";
 import CommentsPanel from "../Comments/CommentsPanel"; // 추가
 import { subscribeComments } from "../../api/firebase"; // 추가
 import { recordCommentOpen, recordGithubOpen } from "../../utils/userProfile";
-
-const DOMPURIFY_CONFIG = {
-  ALLOWED_TAGS: [
-    "a",
-    "b",
-    "blockquote",
-    "br",
-    "code",
-    "del",
-    "em",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "hr",
-    "i",
-    "li",
-    "ol",
-    "p",
-    "pre",
-    "s",
-    "strong",
-    "table",
-    "tbody",
-    "td",
-    "th",
-    "thead",
-    "tr",
-    "ul",
-  ],
-  ALLOWED_ATTR: ["href", "title", "rel", "target"],
-  ALLOW_DATA_ATTR: false,
-  FORCE_BODY: true,
-  ALLOWED_URI_REGEXP: /^https?:\/\//i,
-};
-
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noreferrer noopener");
-  }
-});
-
-const sanitizeHtml = (html) => {
-  if (!html || typeof window === "undefined") return "";
-  try {
-    return DOMPurify.sanitize(html, DOMPURIFY_CONFIG);
-  } catch {
-    return "";
-  }
-};
+import { sanitizeRenderedHtml } from "../../utils/sanitize";
 
 // ─── GitHub 유저 프로필 팝업 ─────────────────────────────────────────────────
 function OwnerProfilePopup({ login, avatarUrl, onClose }) {
@@ -276,7 +223,9 @@ export default function RepoDetailModal({
 
         if (cancelled) return;
 
-        setRenderedHtml(hasGithubAuth ? sanitizeHtml(readmeContent || "") : "");
+        setRenderedHtml(
+          hasGithubAuth ? sanitizeRenderedHtml(readmeContent || "") : "",
+        );
         setReadmeMarkdown(
           hasGithubAuth ? "" : prepareReadmeForLocalRender(readmeContent || ""),
         );
