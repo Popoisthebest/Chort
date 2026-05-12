@@ -1,12 +1,14 @@
 // src/api/github.js
 import { getGithubToken } from "./firebase";
 
-const CACHE_PREFIX = "chort_cache:";
+const CACHE_PREFIX = "chort_cache:v2:";
 const DEFAULT_TTL = 1000 * 60 * 10;
 const SEARCH_TTL = 1000 * 60 * 5;
 const README_TTL = 1000 * 60 * 30;
 const TRANSLATE_TTL = 1000 * 60 * 60 * 6;
 const STARRED_TTL = 1000 * 60 * 5;
+const REQUEST_TIMEOUT_MS = 1000 * 12;
+const RAW_README_TIMEOUT_MS = 1000 * 4;
 
 const memoryCache = new Map();
 const inflightRequests = new Map();
@@ -90,6 +92,24 @@ const cachedRequest = async (key, fetcher, ttl = DEFAULT_TTL) => {
   return promise;
 };
 
+const fetchWithTimeout = async (
+  url,
+  options = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
+) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal || controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const getReadmeCandidatePaths = () => [
   "README.md",
   "readme.md",
@@ -101,8 +121,8 @@ const getReadmeCandidateBranches = (defaultBranch = "main") => {
   return [...new Set([defaultBranch, "main", "master"].filter(Boolean))];
 };
 
-const fetchText = async (url, options = {}) => {
-  const response = await fetch(url, options);
+const fetchText = async (url, options = {}, timeoutMs = REQUEST_TIMEOUT_MS) => {
+  const response = await fetchWithTimeout(url, options, timeoutMs);
   if (!response.ok) return null;
   return response.text();
 };
@@ -111,7 +131,7 @@ const fetchReadmeFromRawGithub = async (owner, repo, branch, path) => {
   const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${path}`;
   return fetchText(rawUrl, {
     headers: { Accept: "text/plain" },
-  });
+  }, RAW_README_TIMEOUT_MS);
 };
 
 const decodeBase64Utf8 = (value) => {
@@ -127,7 +147,7 @@ const decodeBase64Utf8 = (value) => {
 };
 
 const fetchGithubJsonWithPublicFallback = async (url) => {
-  const response = await fetch(url, { headers: getHeaders() });
+  const response = await fetchWithTimeout(url, { headers: getHeaders() });
   if (response.ok) {
     const data = await response.json().catch(() => null);
     return { response, data };
@@ -137,7 +157,7 @@ const fetchGithubJsonWithPublicFallback = async (url) => {
     return { response, data: null };
   }
 
-  const fallbackResponse = await fetch(url, {
+  const fallbackResponse = await fetchWithTimeout(url, {
     headers: { Accept: "application/vnd.github+json" },
   });
   const fallbackData = fallbackResponse.ok
@@ -193,7 +213,7 @@ export const starRepo = async (owner, repo) => {
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.github.com/user/starred/${owner}/${repo}`,
       { method: "PUT", headers: getHeaders() },
     );
@@ -216,7 +236,7 @@ export const unstarRepo = async (owner, repo) => {
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://api.github.com/user/starred/${owner}/${repo}`,
       { method: "DELETE", headers: getHeaders() },
     );
@@ -248,7 +268,7 @@ export const getStarredRepos = async () => {
 
       while (page <= 5) {
         try {
-          const response = await fetch(
+          const response = await fetchWithTimeout(
             `https://api.github.com/user/starred?per_page=${perPage}&page=${page}`,
             { headers: getHeaders() },
           );
@@ -320,7 +340,7 @@ export const getTrendingRepos = async (
   return cachedRequest(
     `trending:${page}:${period}:${language}:${formattedDate}`,
     async () => {
-      const response = await fetch(url, { headers: getHeaders() });
+      const response = await fetchWithTimeout(url, { headers: getHeaders() });
       const data = await response.json();
 
       if (!response.ok || data.message) {
@@ -353,7 +373,7 @@ export const searchRepos = async (keyword) => {
   return cachedRequest(
     `search:${normalizedKeyword}`,
     async () => {
-      const response = await fetch(url, { headers: getHeaders() });
+      const response = await fetchWithTimeout(url, { headers: getHeaders() });
       const data = await response.json();
 
       if (!response.ok || data.message) {
@@ -400,6 +420,107 @@ const cleanReadmeText = (text) => {
   if (codeBlockCount % 2 !== 0) result += "\n```";
 
   return result.trim();
+};
+
+const stripReadmeTableOfContents = (text) => {
+  const lines = String(text || "").split("\n");
+  const result = [];
+  let skippingToc = false;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const isHeading = /^#{1,6}\s+/.test(trimmed);
+    const isTocHeading =
+      isHeading &&
+      /^(?:#{1,6}\s+)?(?:table of contents|contents|목차|차례)\s*$/i.test(
+        trimmed,
+      );
+
+    if (isTocHeading) {
+      skippingToc = true;
+      continue;
+    }
+
+    if (skippingToc) {
+      if (isHeading && !isTocHeading) {
+        skippingToc = false;
+        result.push(line);
+      }
+      continue;
+    }
+
+    result.push(line);
+  }
+
+  return result.join("\n");
+};
+
+const isDecorativeReadmeLine = (line) => {
+  const trimmed = String(line || "").trim();
+  if (!trimmed) return false;
+
+  const lower = trimmed.toLowerCase();
+  const badgeLike =
+    /(?:shields\.io|badge|badgen\.net|github\/workflows|github\/actions|codecov|coveralls|travis-ci|circleci|appveyor|npm\/v|npm\/dm|pypi\/v|img\.shields|sonarcloud)/i.test(
+      trimmed,
+    );
+  const imageOnly =
+    /^!\[[^\]]*]\([^)]+\)\s*$/.test(trimmed) ||
+    /^\[!\[[^\]]*]\([^)]+\)]\([^)]+\)\s*$/.test(trimmed);
+  const htmlMediaOnly = /^<\/?(?:img|picture|source|svg|a|p|div|span|br)\b/i.test(
+    trimmed,
+  );
+  const languageSwitcher =
+    /^(?:english|한국어|korean|简体中文|繁體中文|中文|日本語|japanese|português|español|français)(?:\s*(?:[|/·•-]|&nbsp;)\s*[\p{L}\s]+)+$/iu.test(
+      trimmed.replace(/\[[^\]]+]\([^)]+\)/g, "English"),
+    );
+  const linkOnlyNavigation =
+    /^(?:\[[^\]]+]\([^)]+\)\s*){2,}$/.test(trimmed) &&
+    /(?:docs?|demo|website|guide|examples?|中文|한국어|english|日本語)/i.test(
+      trimmed,
+    );
+
+  return (
+    badgeLike ||
+    imageOnly ||
+    htmlMediaOnly ||
+    languageSwitcher ||
+    linkOnlyNavigation ||
+    lower === "---"
+  );
+};
+
+const stripDecorativeReadmeContent = (text) => {
+  if (!text) return "";
+
+  let cleaned = String(text)
+    .replace(/\r\n/g, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<picture[\s\S]*?<\/picture>/gi, "")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, "")
+    .replace(
+      /<(?:p|div|section|header)\b[^>]*(?:align=["']?center["']?|text-align:\s*center)[^>]*>[\s\S]*?<\/(?:p|div|section|header)>/gi,
+      "",
+    )
+    .replace(/\[!\[[^\]]*]\([^)]+\)]\([^)]+\)/g, "")
+    .replace(/!\[[^\]]*]\([^)]+\)/g, "")
+    .replace(/<img\b[^>]*>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n");
+
+  cleaned = stripReadmeTableOfContents(cleaned);
+
+  const lines = cleaned
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/g, ""));
+
+  while (lines.length > 0 && !lines[0].trim()) lines.shift();
+  while (lines.length > 0 && isDecorativeReadmeLine(lines[0])) lines.shift();
+
+  return lines
+    .filter((line) => !isDecorativeReadmeLine(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 };
 
 export const prepareReadmeForLocalRender = (text) => {
@@ -476,7 +597,7 @@ export const buildReadmePreview = (
 ) => {
   if (!text) return "";
 
-  const normalized = String(text).replace(/\r\n/g, "\n").trim();
+  const normalized = stripDecorativeReadmeContent(text);
   if (!normalized) return "";
 
   const lines = normalized.split("\n");
@@ -499,22 +620,6 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
   return cachedRequest(
     `readme-raw:${owner}/${repo}:${branches.join(",")}:${paths.join(",")}`,
     async () => {
-      for (const branch of branches) {
-        for (const path of paths) {
-          try {
-            const text = await fetchReadmeFromRawGithub(
-              owner,
-              repo,
-              branch,
-              path,
-            );
-            if (text) return text;
-          } catch {
-            // raw.githubusercontent.com 실패 시 다음 후보로 진행
-          }
-        }
-      }
-
       for (const branch of branches) {
         const readmeApiUrl = `https://api.github.com/repos/${owner}/${repo}/readme?ref=${encodeURIComponent(branch)}`;
         try {
@@ -556,6 +661,22 @@ export const getReadmeRaw = async (owner, repo, defaultBranch = "main") => {
             }
           } catch {
             // 후보 브랜치/경로 탐색 중 단건 실패는 다음 후보로 진행
+          }
+        }
+      }
+
+      for (const branch of branches) {
+        for (const path of paths) {
+          try {
+            const text = await fetchReadmeFromRawGithub(
+              owner,
+              repo,
+              branch,
+              path,
+            );
+            if (text) return text;
+          } catch {
+            // raw.githubusercontent.com 실패 시 다음 후보로 진행
           }
         }
       }
@@ -608,7 +729,7 @@ export const getRenderedReadmeHtml = async (
       if (!markdown) return "";
 
       try {
-        const response = await fetch("https://api.github.com/markdown", {
+        const response = await fetchWithTimeout("https://api.github.com/markdown", {
           method: "POST",
           headers: getHeaders({
             accept: "text/html",
@@ -658,7 +779,7 @@ export const getRenderedReadmeHtmlPreview = async (
       if (!markdown) return "";
 
       try {
-        const response = await fetch("https://api.github.com/markdown", {
+        const response = await fetchWithTimeout("https://api.github.com/markdown", {
           method: "POST",
           headers: getHeaders({
             accept: "text/html",
@@ -694,7 +815,7 @@ export const getTranslatedText = async (text, target = "ko") => {
     `translate:${target}:${normalized}`,
     async () => {
       try {
-        const response = await fetch(
+        const response = await fetchWithTimeout(
           `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${target}&dt=t&q=${encodeURIComponent(normalized)}`,
         );
         const data = await response.json();

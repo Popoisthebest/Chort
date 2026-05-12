@@ -15,6 +15,8 @@ import {
   MessageCircle,
   SlidersHorizontal,
   X,
+  Plus,
+  Trash2,
 } from "lucide-react";
 import ChortCard from "../Card/ChortCard";
 import CommentsPanel from "../Comments/CommentsPanel";
@@ -32,7 +34,7 @@ import {
 } from "../../utils/userProfile";
 import { LoginModalContext } from "../../App";
 
-const LANG_FILTERS = [
+const DEFAULT_LANG_FILTERS = [
   "전체",
   "Python",
   "TypeScript",
@@ -41,16 +43,143 @@ const LANG_FILTERS = [
   "Java",
   "C++",
 ];
+const CUSTOM_LANGUAGES_KEY = "chort_custom_languages";
+const MAX_CUSTOM_LANGUAGES = 20;
+
 const PERIOD_FILTERS = [
   { label: "오늘", value: "daily" },
   { label: "이번주", value: "weekly" },
   { label: "이번달", value: "monthly" },
 ];
 
+const normalizeLanguageInput = (value) => {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
+};
+
+const mergeLanguageFilters = (customLanguages = []) => {
+  const merged = [];
+  const seen = new Set();
+
+  [...DEFAULT_LANG_FILTERS, ...customLanguages].forEach((language) => {
+    const normalized = normalizeLanguageInput(language);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    merged.push(normalized);
+  });
+
+  return merged;
+};
+
+const loadCustomLanguages = () => {
+  try {
+    const raw = localStorage.getItem(CUSTOM_LANGUAGES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? mergeLanguageFilters(parsed).filter(
+          (language) =>
+            !DEFAULT_LANG_FILTERS.some(
+              (defaultLanguage) =>
+                defaultLanguage.toLowerCase() === language.toLowerCase(),
+            ),
+        )
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveCustomLanguages = (languages) => {
+  try {
+    localStorage.setItem(CUSTOM_LANGUAGES_KEY, JSON.stringify(languages));
+  } catch {
+    // ignore storage errors
+  }
+};
+
+function LanguageFilterControls({
+  languages,
+  customLanguages,
+  selectedLanguage,
+  inputValue,
+  onInputChange,
+  onSelect,
+  onAdd,
+  onRemove,
+}) {
+  const customLanguageSet = useMemo(
+    () => new Set(customLanguages.map((language) => language.toLowerCase())),
+    [customLanguages],
+  );
+
+  return (
+    <div>
+      <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        언어
+      </p>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {languages.map((lang) => {
+          const isCustom = customLanguageSet.has(lang.toLowerCase());
+          return (
+            <span
+              key={lang}
+              className={`inline-flex items-center rounded-full text-xs font-bold transition ${
+                selectedLanguage === lang
+                  ? "bg-blue-600 text-white"
+                  : "bg-white/10 text-gray-400 hover:bg-white/20"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSelect(lang)}
+                className="px-3 py-1 whitespace-nowrap"
+              >
+                {lang}
+              </button>
+              {isCustom && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(lang)}
+                  className="mr-1 rounded-full p-1 text-gray-300 transition hover:bg-white/15 hover:text-white"
+                  title={`${lang} 삭제`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <form onSubmit={onAdd} className="flex min-w-0 gap-2">
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => onInputChange(e.target.value)}
+          placeholder="언어 추가"
+          className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-xs text-white outline-none placeholder:text-gray-600 focus:border-blue-500"
+        />
+        <button
+          type="submit"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-500"
+          disabled={!normalizeLanguageInput(inputValue)}
+          title="언어 추가"
+        >
+          <Plus className="h-4 w-4" />
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function Feed() {
-  const [periodFilter, setPeriodFilter] = useState("daily");
+  const [periodFilter, setPeriodFilter] = useState("monthly");
   const [langFilter, setLangFilter] = useState("전체");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [customLanguageInput, setCustomLanguageInput] = useState("");
+  const [customLanguages, setCustomLanguages] = useState(loadCustomLanguages);
   const { repos, loading, error, fetchMore, resetFeed } = useFeed(
     periodFilter,
     langFilter,
@@ -66,9 +195,16 @@ export default function Feed() {
   const feedScrollRef = useRef(null);
   const lastTapRef = useRef({}); // 더블탭 감지용
 
+  const languageFilters = useMemo(
+    () => mergeLanguageFilters(customLanguages),
+    [customLanguages],
+  );
+
   const filteredRepos = useMemo(() => {
     if (langFilter === "전체") return repos;
-    return repos.filter((repo) => repo.language === langFilter);
+    return repos.filter(
+      (repo) => repo.language?.toLowerCase() === langFilter.toLowerCase(),
+    );
   }, [langFilter, repos]);
 
   const activeRepo = useMemo(() => {
@@ -273,6 +409,57 @@ export default function Feed() {
     }));
   }, []);
 
+  const handleAddCustomLanguage = useCallback((event) => {
+    event.preventDefault();
+    const nextLanguage = normalizeLanguageInput(customLanguageInput);
+    if (!nextLanguage) return;
+
+    const allLanguages = mergeLanguageFilters(customLanguages);
+    const alreadyExists = allLanguages.some(
+      (language) => language.toLowerCase() === nextLanguage.toLowerCase(),
+    );
+
+    if (alreadyExists) {
+      setLangFilter(
+        allLanguages.find(
+          (language) => language.toLowerCase() === nextLanguage.toLowerCase(),
+        ) || nextLanguage,
+      );
+      setCustomLanguageInput("");
+      return;
+    }
+
+    setCustomLanguages((prev) => {
+      const updated = [...prev, nextLanguage].slice(-MAX_CUSTOM_LANGUAGES);
+      saveCustomLanguages(updated);
+      return updated;
+    });
+    setLangFilter(nextLanguage);
+    setCustomLanguageInput("");
+  }, [customLanguageInput, customLanguages]);
+
+  const handleRemoveCustomLanguage = useCallback((languageToRemove) => {
+    setCustomLanguages((prev) => {
+      const updated = prev.filter(
+        (language) =>
+          language.toLowerCase() !== languageToRemove.toLowerCase(),
+      );
+      saveCustomLanguages(updated);
+      return updated;
+    });
+
+    setLangFilter((current) =>
+      current.toLowerCase() === languageToRemove.toLowerCase() ? "전체" : current,
+    );
+  }, []);
+
+  useEffect(() => {
+    const exists = languageFilters.some(
+      (language) => language.toLowerCase() === langFilter.toLowerCase(),
+    );
+    if (!exists) setLangFilter("전체");
+  }, [langFilter, languageFilters]);
+
   return (
     <div className="relative flex h-full w-full min-w-0 overflow-x-hidden bg-black gap-0">
       <div className="absolute left-4 top-4 z-30 hidden lg:flex lg:flex-col lg:items-start lg:gap-3">
@@ -307,26 +494,16 @@ export default function Feed() {
               </div>
             </div>
 
-            <div>
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                언어
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {LANG_FILTERS.map((lang) => (
-                  <button
-                    key={lang}
-                    onClick={() => setLangFilter(lang)}
-                    className={`px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap transition ${
-                      langFilter === lang
-                        ? "bg-blue-600 text-white"
-                        : "bg-white/10 text-gray-400 hover:bg-white/20"
-                    }`}
-                  >
-                    {lang}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <LanguageFilterControls
+              languages={languageFilters}
+              customLanguages={customLanguages}
+              selectedLanguage={langFilter}
+              inputValue={customLanguageInput}
+              onInputChange={setCustomLanguageInput}
+              onSelect={setLangFilter}
+              onAdd={handleAddCustomLanguage}
+              onRemove={handleRemoveCustomLanguage}
+            />
           </div>
         )}
       </div>
@@ -364,26 +541,16 @@ export default function Feed() {
             </div>
           </div>
 
-          <div>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500">
-              언어
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {LANG_FILTERS.map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => setLangFilter(lang)}
-                  className={`rounded-full px-3 py-1 text-xs font-bold whitespace-nowrap transition ${
-                    langFilter === lang
-                      ? "bg-blue-600 text-white"
-                      : "bg-white/10 text-gray-400 hover:bg-white/20"
-                  }`}
-                >
-                  {lang}
-                </button>
-              ))}
-            </div>
-          </div>
+          <LanguageFilterControls
+            languages={languageFilters}
+            customLanguages={customLanguages}
+            selectedLanguage={langFilter}
+            inputValue={customLanguageInput}
+            onInputChange={setCustomLanguageInput}
+            onSelect={setLangFilter}
+            onAdd={handleAddCustomLanguage}
+            onRemove={handleRemoveCustomLanguage}
+          />
         </div>
       )}
 

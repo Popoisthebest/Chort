@@ -7,7 +7,7 @@ import { getSeenIds } from "../utils/userProfile";
 const PAGES_PER_BATCH = 3;
 const PREFETCH_ROUNDS = 4;
 
-export const useFeed = (periodFilter = "daily", languageFilter = "전체") => {
+export const useFeed = (periodFilter = "monthly", languageFilter = "전체") => {
   const [repos, setRepos] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);

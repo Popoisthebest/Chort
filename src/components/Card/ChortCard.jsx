@@ -4,13 +4,11 @@ import { Terminal, FileText, AlignLeft, Languages } from "lucide-react";
 import {
   getReadmeImage,
   getReadmePreviewRaw,
-  getRenderedReadmeHtmlPreview,
   prepareReadmeForLocalRender,
   translateToKorean,
 } from "../../api/github";
-import { getCommentCount, getGithubToken } from "../../api/firebase";
+import { getCommentCount } from "../../api/firebase";
 import { recordView } from "../../utils/userProfile";
-import { sanitizeRenderedHtml } from "../../utils/sanitize";
 
 const repoDetailCache = new Map();
 
@@ -23,6 +21,7 @@ const getInitialCacheEntry = (repo) => {
       koDescription: "",
       renderedReadmeHtml: "",
       readmeMarkdown: "",
+      readmeFallback: "",
       readmeImage: null,
       commentCount: null,
       lightLoaded: false,
@@ -52,6 +51,12 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
   );
   const [readmeMarkdown, setReadmeMarkdown] = useState(
     cacheEntry.readmeMarkdown || "",
+  );
+  const [readmeFallback, setReadmeFallback] = useState(
+    cacheEntry.readmeFallback || "",
+  );
+  const [readmeLoaded, setReadmeLoaded] = useState(
+    cacheEntry.heavyLoaded || false,
   );
   const [isKorean, setIsKorean] = useState(true);
 
@@ -121,6 +126,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
     setKoDescription(latestCache.koDescription || "번역 중...");
     setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
     setReadmeMarkdown(latestCache.readmeMarkdown || "");
+    setReadmeFallback(latestCache.readmeFallback || "");
+    setReadmeLoaded(latestCache.heavyLoaded || false);
     setIsKorean(true);
     lightLoadedRef.current = latestCache.lightLoaded || false;
     heavyLoadedRef.current = latestCache.heavyLoaded || false;
@@ -181,6 +188,8 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           setReadmeImage(latestCache.readmeImage || null);
           setRenderedReadmeHtml(latestCache.renderedReadmeHtml || "");
           setReadmeMarkdown(latestCache.readmeMarkdown || "");
+          setReadmeFallback(latestCache.readmeFallback || "");
+          setReadmeLoaded(true);
           heavyLoadedRef.current = true;
           return;
         }
@@ -190,18 +199,11 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           repo.name,
           repo.default_branch,
         );
-        const hasGithubAuth = !!getGithubToken();
-        const readmePromise = hasGithubAuth
-          ? getRenderedReadmeHtmlPreview(
-              repo.owner.login,
-              repo.name,
-              repo.default_branch,
-            )
-          : getReadmePreviewRaw(
-              repo.owner.login,
-              repo.name,
-              repo.default_branch,
-            );
+        const readmePromise = getReadmePreviewRaw(
+          repo.owner.login,
+          repo.name,
+          repo.default_branch,
+        );
 
         const [imageUrl, readmeContent] = await Promise.all([
           imagePromise,
@@ -210,21 +212,23 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
 
         if (cancelled) return;
 
-        setReadmeImage(imageUrl || null);
-        const safeHtml = hasGithubAuth
-          ? sanitizeRenderedHtml(readmeContent || "")
-          : "";
-        setRenderedReadmeHtml(safeHtml);
-        setReadmeMarkdown(
-          hasGithubAuth ? "" : prepareReadmeForLocalRender(readmeContent || ""),
+        const nextReadmeMarkdown = prepareReadmeForLocalRender(
+          readmeContent || "",
         );
+        const nextFallback = nextReadmeMarkdown
+          ? ""
+          : "README 데이터를 찾을 수 없습니다.";
+
+        setReadmeImage(imageUrl || null);
+        setRenderedReadmeHtml("");
+        setReadmeMarkdown(nextReadmeMarkdown);
+        setReadmeFallback(nextFallback);
+        setReadmeLoaded(true);
         setRepoCacheEntry(repo, {
           readmeImage: imageUrl || null,
-          renderedReadmeHtml: safeHtml,
-          readmeMarkdown:
-            hasGithubAuth
-              ? ""
-              : prepareReadmeForLocalRender(readmeContent || ""),
+          renderedReadmeHtml: "",
+          readmeMarkdown: nextReadmeMarkdown,
+          readmeFallback: nextFallback,
           heavyLoaded: true,
         });
         heavyLoadedRef.current = true;
@@ -234,11 +238,14 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
           setReadmeImage(null);
           setRenderedReadmeHtml("");
           setReadmeMarkdown("");
+          setReadmeFallback("README 미리보기를 불러오지 못했습니다.");
+          setReadmeLoaded(true);
         }
         setRepoCacheEntry(repo, {
           readmeImage: null,
           renderedReadmeHtml: "",
           readmeMarkdown: "",
+          readmeFallback: "README 미리보기를 불러오지 못했습니다.",
           heavyLoaded: true,
         });
         heavyLoadedRef.current = true;
@@ -391,12 +398,19 @@ const ChortCard = ({ repo, onVisible, onCommentsCountChange }) => {
                   <ReactMarkdown>{readmeMarkdown}</ReactMarkdown>
                 </div>
               </div>
-            ) : (
+            ) : !readmeLoaded ? (
               <div
                 className="block w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-all text-[11px] leading-relaxed text-gray-300 sm:text-xs md:leading-snug"
                 style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
               >
                 README 불러오는 중...
+              </div>
+            ) : (
+              <div
+                className="block w-full min-w-0 max-w-full overflow-hidden whitespace-pre-wrap break-all text-[11px] leading-relaxed text-gray-400 sm:text-xs md:leading-snug"
+                style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}
+              >
+                {readmeFallback || "README 데이터를 찾을 수 없습니다."}
               </div>
             )}
 

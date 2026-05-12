@@ -1,0 +1,48 @@
+[debug] [2026-05-12T08:16:12.180Z] ----------------------------------------------------------------------
+[debug] [2026-05-12T08:16:12.182Z] Command:       /opt/homebrew/Cellar/node/24.5.0/bin/node /opt/homebrew/bin/firebase deploy
+[debug] [2026-05-12T08:16:12.183Z] CLI Version:   15.16.0
+[debug] [2026-05-12T08:16:12.183Z] Platform:      darwin
+[debug] [2026-05-12T08:16:12.183Z] Node Version:  v24.5.0
+[debug] [2026-05-12T08:16:12.183Z] Time:          Tue May 12 2026 17:16:12 GMT+0900 (Korean Standard Time)
+[debug] [2026-05-12T08:16:12.183Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-05-12T08:16:12.184Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[debug] [2026-05-12T08:16:13.346Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-05-12T08:16:13.346Z] > authorizing via signed-in user (popoformac@gmail.com)
+[debug] [2026-05-12T08:16:13.346Z] [iam] checking project chort-3733b for permissions ["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get","firebase.projects.update","firebaseauth.configs.update","firebasehosting.sites.update"]
+[debug] [2026-05-12T08:16:13.346Z] Checked if tokens are valid: false, expires at: 1777654146499
+[debug] [2026-05-12T08:16:13.346Z] Checked if tokens are valid: false, expires at: 1777654146499
+[debug] [2026-05-12T08:16:13.346Z] > refreshing access token with scopes: []
+[debug] [2026-05-12T08:16:13.347Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-05-12T08:16:13.347Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-05-12T08:16:13.951Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2026-05-12T08:16:13.951Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-05-12T08:16:13.967Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/chort-3733b:testIamPermissions [none]
+[debug] [2026-05-12T08:16:13.967Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/chort-3733b:testIamPermissions  x-goog-user-project=chort-3733b
+[debug] [2026-05-12T08:16:13.967Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/chort-3733b:testIamPermissions {"permissions":["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get","firebase.projects.update","firebaseauth.configs.update","firebasehosting.sites.update"]}
+[debug] [2026-05-12T08:16:14.022Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 200
+[debug] [2026-05-12T08:16:14.022Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json {"cloudBuildErrorAfter":1594252800000,"cloudBuildWarnAfter":1590019200000,"defaultNode10After":1594252800000,"minVersion":"3.0.5","node8DeploysDisabledAfter":1613390400000,"node8RuntimeDisabledAfter":1615809600000,"node8WarnAfter":1600128000000}
+[debug] [2026-05-12T08:16:17.826Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/chort-3733b:testIamPermissions 200
+[debug] [2026-05-12T08:16:17.826Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/chort-3733b:testIamPermissions {"permissions":["datastore.indexes.create","datastore.indexes.delete","datastore.indexes.list","datastore.indexes.update","firebase.projects.get","firebase.projects.update","firebaseauth.configs.update","firebasehosting.sites.update"]}
+[debug] [2026-05-12T08:16:17.827Z] Checked if tokens are valid: true, expires at: 1778577372951
+[debug] [2026-05-12T08:16:17.827Z] Checked if tokens are valid: true, expires at: 1778577372951
+[debug] [2026-05-12T08:16:17.827Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/chort-3733b [none]
+[debug] [2026-05-12T08:16:18.624Z] <<< [apiv2][status] GET https://firebase.googleapis.com/v1beta1/projects/chort-3733b 200
+[debug] [2026-05-12T08:16:18.624Z] <<< [apiv2][body] GET https://firebase.googleapis.com/v1beta1/projects/chort-3733b {"projectId":"chort-3733b","projectNumber":"249933114283","displayName":"Chort","name":"projects/chort-3733b","resources":{"hostingSite":"chort-3733b"},"state":"ACTIVE","etag":"1_429ff6b8-3217-4a63-bfd2-256980b1d787"}
+[info] 
+[info] === Deploying to 'chort-3733b'...
+[info] 
+[info] i  deploying firestore, hosting, auth 
+[info] i  firestore: ensuring required API firestore.googleapis.com is enabled... 
+[info] i  firestore: ensuring required API firestore.googleapis.com is enabled... 
+[debug] [2026-05-12T08:16:18.630Z] Checked if tokens are valid: true, expires at: 1778577372951
+[debug] [2026-05-12T08:16:18.630Z] Checked if tokens are valid: true, expires at: 1778577372951
+[debug] [2026-05-12T08:16:18.631Z] >>> [apiv2][query] GET https://firestore.googleapis.com/v1/projects/chort-3733b/databases/(default) [none]
+[debug] [2026-05-12T08:16:19.914Z] <<< [apiv2][status] GET https://firestore.googleapis.com/v1/projects/chort-3733b/databases/(default) 200
+[debug] [2026-05-12T08:16:19.914Z] <<< [apiv2][body] GET https://firestore.googleapis.com/v1/projects/chort-3733b/databases/(default) {"name":"projects/chort-3733b/databases/(default)","uid":"dac0d2ff-935d-4080-acb5-50c7408f317e","createTime":"2026-04-06T15:20:47.462972Z","updateTime":"2026-04-06T15:20:47.462972Z","locationId":"asia-northeast3","type":"FIRESTORE_NATIVE","concurrencyMode":"PESSIMISTIC","versionRetentionPeriod":"3600s","earliestVersionTime":"2026-05-12T07:16:19.807304Z","appEngineIntegrationMode":"DISABLED","keyPrefix":"v","pointInTimeRecoveryEnablement":"POINT_IN_TIME_RECOVERY_DISABLED","deleteProtectionState":"DELETE_PROTECTION_DISABLED","databaseEdition":"STANDARD","freeTier":true,"realtimeUpdatesMode":"REALTIME_UPDATES_MODE_ENABLED","etag":"IKDU6NKns5QDMPvuucvE2ZMD"}
+[info] i  firestore: reading indexes from firestore.indexes.json... 
+[info] i  cloud.firestore: checking firestore.rules for compilation errors... 
+[debug] [2026-05-12T08:16:19.915Z] Checked if tokens are valid: true, expires at: 1778577372951
+[debug] [2026-05-12T08:16:19.915Z] Checked if tokens are valid: true, expires at: 1778577372951
+[debug] [2026-05-12T08:16:19.916Z] >>> [apiv2][query] POST https://firebaserules.googleapis.com/v1/projects/chort-3733b:test [none]
+[debug] [2026-05-12T08:16:19.916Z] >>> [apiv2][body] POST https://firebaserules.googleapis.com/v1/projects/chort-3733b:test [omitted]
